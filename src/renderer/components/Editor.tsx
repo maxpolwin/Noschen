@@ -164,50 +164,89 @@ function Editor({
   };
 
   const handleAcceptFeedback = (feedbackId: string) => {
+    const feedbackItem = feedback.find((f) => f.id === feedbackId);
+    if (!feedbackItem || !editor) return;
+
     setFeedback((prev) =>
       prev.map((f) => (f.id === feedbackId ? { ...f, status: 'accepted' } : f))
     );
 
-    // Insert the suggestion content directly
-    if (editor) {
-      const feedbackItem = feedback.find((f) => f.id === feedbackId);
-      if (feedbackItem && feedbackItem.suggestion) {
-        // Process the suggestion: convert escaped newlines and format for editor
-        const processedSuggestion = feedbackItem.suggestion
-          .replace(/\\n/g, '\n')
-          .trim();
+    // Process the suggestion: convert escaped newlines
+    const processedSuggestion = (feedbackItem.suggestion || feedbackItem.text)
+      .replace(/\\n/g, '\n')
+      .trim();
 
-        // Move to end of document and insert
-        editor.commands.focus('end');
+    // Convert markdown to HTML
+    const convertToHtml = (text: string): string => {
+      const lines = text.split('\n');
+      let html = '';
 
-        // Insert as plain text paragraphs, converting ## headings to H2
-        const lines = processedSuggestion.split('\n');
-        let htmlContent = '';
-
-        for (const line of lines) {
-          const trimmedLine = line.trim();
-          if (trimmedLine.startsWith('### ')) {
-            htmlContent += `<h3>${trimmedLine.substring(4)}</h3>`;
-          } else if (trimmedLine.startsWith('## ')) {
-            htmlContent += `<h2>${trimmedLine.substring(3)}</h2>`;
-          } else if (trimmedLine.startsWith('# ')) {
-            htmlContent += `<h1>${trimmedLine.substring(2)}</h1>`;
-          } else if (trimmedLine.startsWith('- ')) {
-            htmlContent += `<p>• ${trimmedLine.substring(2)}</p>`;
-          } else if (trimmedLine === '') {
-            // Skip empty lines, they're handled by paragraph breaks
-          } else {
-            htmlContent += `<p>${trimmedLine}</p>`;
-          }
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('### ')) {
+          html += `<h3>${trimmed.substring(4)}</h3>`;
+        } else if (trimmed.startsWith('## ')) {
+          html += `<h2>${trimmed.substring(3)}</h2>`;
+        } else if (trimmed.startsWith('# ')) {
+          html += `<h1>${trimmed.substring(2)}</h1>`;
+        } else if (trimmed.startsWith('- ')) {
+          html += `<li>${trimmed.substring(2)}</li>`;
+        } else if (trimmed.startsWith('* ')) {
+          html += `<li>${trimmed.substring(2)}</li>`;
+        } else if (trimmed === '') {
+          continue;
+        } else {
+          html += `<p>${trimmed}</p>`;
         }
+      }
+      return html;
+    };
 
-        editor.commands.insertContent(htmlContent);
-      } else if (feedbackItem) {
-        // Fallback: insert the feedback text as a note
-        editor.commands.focus('end');
-        editor.commands.insertContent(`<p><strong>Note:</strong> ${feedbackItem.text}</p>`);
+    const htmlContent = convertToHtml(processedSuggestion);
+
+    // If there's relevant text, try to find and replace it
+    if (feedbackItem.relevantText) {
+      const relevantText = feedbackItem.relevantText
+        .replace(/\.\.\.$/g, '')
+        .replace(/^["']|["']$/g, '')
+        .trim();
+
+      // Try to find the relevant text in the document
+      const textContent = editor.getText();
+      const searchText = relevantText.substring(0, 50); // First 50 chars
+
+      if (textContent.includes(searchText)) {
+        // Find the position and select the text
+        const doc = editor.state.doc;
+        let found = false;
+
+        doc.descendants((node, pos) => {
+          if (found) return false;
+          if (node.isText && node.text?.includes(searchText)) {
+            const start = pos + (node.text.indexOf(searchText));
+            const end = start + searchText.length;
+
+            // Set selection and replace
+            editor
+              .chain()
+              .focus()
+              .setTextSelection({ from: start, to: end })
+              .deleteSelection()
+              .insertContent(htmlContent)
+              .run();
+
+            found = true;
+            return false;
+          }
+        });
+
+        if (found) return;
       }
     }
+
+    // Fallback: insert at the end of the document
+    editor.commands.focus('end');
+    editor.commands.insertContent(htmlContent);
   };
 
   const handleRejectFeedback = (feedbackId: string) => {
@@ -333,9 +372,19 @@ function Editor({
           </div>
         )}
       </div>
-      <div className="shortcuts-hint">
-        <kbd>Cmd</kbd>+<kbd>S</kbd> Save | <kbd>Cmd</kbd>+<kbd>Enter</kbd> Accept | <kbd>Cmd</kbd>+
-        <kbd>Delete</kbd> Reject
+      <div className="shortcuts-bar">
+        <div className="shortcut">
+          <kbd>⌘</kbd><kbd>S</kbd>
+          <span>Save</span>
+        </div>
+        <div className="shortcut">
+          <kbd>⌘</kbd><kbd>Enter</kbd>
+          <span>Accept</span>
+        </div>
+        <div className="shortcut">
+          <kbd>⌘</kbd><kbd>⌫</kbd>
+          <span>Reject</span>
+        </div>
       </div>
     </>
   );
