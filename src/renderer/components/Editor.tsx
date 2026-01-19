@@ -171,12 +171,41 @@ function Editor({
     // Insert the suggestion content directly
     if (editor) {
       const feedbackItem = feedback.find((f) => f.id === feedbackId);
-      if (feedbackItem) {
-        // Use the suggestion if available, otherwise fall back to TODO
-        const contentToInsert = feedbackItem.suggestion
-          ? `\n\n${feedbackItem.suggestion.replace(/\\n/g, '\n')}\n\n`
-          : `\n\n[TODO: ${feedbackItem.text}]\n\n`;
-        editor.commands.insertContent(contentToInsert);
+      if (feedbackItem && feedbackItem.suggestion) {
+        // Process the suggestion: convert escaped newlines and format for editor
+        const processedSuggestion = feedbackItem.suggestion
+          .replace(/\\n/g, '\n')
+          .trim();
+
+        // Move to end of document and insert
+        editor.commands.focus('end');
+
+        // Insert as plain text paragraphs, converting ## headings to H2
+        const lines = processedSuggestion.split('\n');
+        let htmlContent = '';
+
+        for (const line of lines) {
+          const trimmedLine = line.trim();
+          if (trimmedLine.startsWith('### ')) {
+            htmlContent += `<h3>${trimmedLine.substring(4)}</h3>`;
+          } else if (trimmedLine.startsWith('## ')) {
+            htmlContent += `<h2>${trimmedLine.substring(3)}</h2>`;
+          } else if (trimmedLine.startsWith('# ')) {
+            htmlContent += `<h1>${trimmedLine.substring(2)}</h1>`;
+          } else if (trimmedLine.startsWith('- ')) {
+            htmlContent += `<p>• ${trimmedLine.substring(2)}</p>`;
+          } else if (trimmedLine === '') {
+            // Skip empty lines, they're handled by paragraph breaks
+          } else {
+            htmlContent += `<p>${trimmedLine}</p>`;
+          }
+        }
+
+        editor.commands.insertContent(htmlContent);
+      } else if (feedbackItem) {
+        // Fallback: insert the feedback text as a note
+        editor.commands.focus('end');
+        editor.commands.insertContent(`<p><strong>Note:</strong> ${feedbackItem.text}</p>`);
       }
     }
   };

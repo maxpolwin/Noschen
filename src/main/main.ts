@@ -215,38 +215,37 @@ ipcMain.handle('settings:save', async (_, settings: AISettings) => {
 ipcMain.handle('ai:analyze', async (_, content: string, context: { h1: string; h2: string; allH2s: string[] }) => {
   const settings = loadSettings();
 
-  const systemPrompt = `You are a research assistant analyzing academic notes. Your task is to provide concise, actionable feedback with CONCRETE SUGGESTIONS that can be directly inserted into the notes.
+  const systemPrompt = `You are a research assistant analyzing academic notes. Provide feedback with CONCRETE, INSERTABLE CONTENT.
 
-The user is working on research about: "${context.h1}"
-Current section focus: "${context.h2}"
-All sections in this note: ${context.allH2s.join(', ')}
+Research topic: "${context.h1}"
+Current section: "${context.h2}"
+Existing sections: ${context.allH2s.join(', ')}
 
-Analyze the provided content and generate feedback in the following categories:
-1. MECE (Mutually Exclusive, Collectively Exhaustive) - Are categories well-organized? What's missing?
-2. GAPS - What aspects, considerations, or perspectives are not addressed?
-3. SOURCES - What types of literature or domains should be explored?
-4. STRUCTURE - How could the organization be improved?
+Analyze the content and provide feedback. CRITICAL REQUIREMENT: Every feedback item MUST include a "suggestion" field containing actual text that can be directly inserted into the document.
 
-IMPORTANT: For each feedback item, provide a "suggestion" field with CONCRETE TEXT that the user can directly insert into their notes. This should be actual content they can use, not just advice.
+Categories:
+1. MECE - Missing or overlapping categories
+2. GAP - Missing aspects or perspectives
+3. SOURCE - Literature recommendations
+4. STRUCTURE - Organization improvements
 
-Respond in JSON format:
+REQUIRED JSON FORMAT (suggestion field is MANDATORY for every item):
 {
   "feedback": [
     {
-      "type": "mece" | "gap" | "source" | "structure",
-      "text": "Brief explanation of the issue (1 sentence)",
-      "suggestion": "The actual text/content to add. For structure suggestions, provide the new headings. For gaps, provide the missing content as a starting point. For sources, provide specific recommendations. Make this insertable text."
+      "type": "mece",
+      "text": "Brief issue description",
+      "suggestion": "## Missing Category 1\\n\\nContent placeholder for this category.\\n\\n## Missing Category 2\\n\\nContent placeholder."
+    },
+    {
+      "type": "gap",
+      "text": "Brief issue description",
+      "suggestion": "The environmental impact deserves attention: Large language models require significant computational resources, with estimates suggesting that training a single large model can emit as much carbon as five cars over their lifetimes."
     }
   ]
 }
 
-Examples of good suggestions:
-- For MECE: "## Technical Limitations\\n\\n## Ethical Considerations\\n\\n## Economic Impact"
-- For GAP: "Consider the environmental impact: LLMs require significant computational resources, raising concerns about energy consumption and carbon footprint."
-- For SOURCE: "Key references to explore:\\n- 'Attention Is All You Need' (Vaswani et al., 2017)\\n- Stanford AI Index Report\\n- MIT Technology Review on LLM applications"
-- For STRUCTURE: "## 1. Definition and Background\\n\\n## 2. Current Applications\\n\\n## 3. Limitations\\n\\n## 4. Future Directions"
-
-Keep explanations brief but make suggestions detailed and directly usable.`;
+The "suggestion" field must contain 2-5 sentences of actual content or multiple headings with placeholder text. Never leave suggestion empty or omit it.`;
 
   const userPrompt = `Please analyze this research note section:\n\n${content}`;
 
@@ -269,7 +268,8 @@ Keep explanations brief but make suggestions detailed and directly usable.`;
 
       const data = await response.json() as { response: string };
       try {
-        return JSON.parse(data.response);
+        const parsed = JSON.parse(data.response);
+        return ensureSuggestions(parsed);
       } catch {
         return { feedback: [] };
       }
@@ -297,7 +297,8 @@ Keep explanations brief but make suggestions detailed and directly usable.`;
 
       const data = await response.json() as { choices: { message: { content: string } }[] };
       try {
-        return JSON.parse(data.choices[0].message.content);
+        const parsed = JSON.parse(data.choices[0].message.content);
+        return ensureSuggestions(parsed);
       } catch {
         return { feedback: [] };
       }
@@ -307,6 +308,30 @@ Keep explanations brief but make suggestions detailed and directly usable.`;
     return { feedback: [], error: 'AI analysis failed. Check your settings.' };
   }
 });
+
+// Helper function to ensure all feedback items have suggestions
+function ensureSuggestions(response: { feedback?: Array<{ type: string; text: string; suggestion?: string }> }) {
+  if (!response.feedback || !Array.isArray(response.feedback)) {
+    return { feedback: [] };
+  }
+
+  const suggestionTemplates: Record<string, (text: string) => string> = {
+    mece: (text) => `## Additional Category\n\n${text}\n\nConsider exploring this aspect in more detail.`,
+    gap: (text) => `${text}\n\nThis perspective could strengthen the analysis by providing a more comprehensive view of the topic.`,
+    source: (text) => `### Recommended Sources\n\n${text}\n\n- Consider searching Google Scholar for related academic papers\n- Look for recent review articles in this domain`,
+    structure: (text) => `## Suggested Section\n\n${text}\n\n### Subsection A\n\n### Subsection B`,
+  };
+
+  response.feedback = response.feedback.map((item) => {
+    if (!item.suggestion || item.suggestion.trim() === '') {
+      const template = suggestionTemplates[item.type] || suggestionTemplates.gap;
+      item.suggestion = template(item.text);
+    }
+    return item;
+  });
+
+  return response;
+}
 
 ipcMain.handle('ai:checkConnection', async () => {
   const settings = loadSettings();
