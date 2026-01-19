@@ -24,6 +24,7 @@ export interface FeedbackItem {
   id: string;
   type: 'mece' | 'gap' | 'source' | 'structure';
   text: string;
+  suggestion?: string;
   relevantText?: string;
   status: 'active' | 'accepted' | 'rejected';
   sectionId?: string;

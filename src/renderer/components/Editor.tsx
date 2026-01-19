@@ -168,12 +168,15 @@ function Editor({
       prev.map((f) => (f.id === feedbackId ? { ...f, status: 'accepted' } : f))
     );
 
-    // Insert a plain text TODO reminder at cursor position
+    // Insert the suggestion content directly
     if (editor) {
       const feedbackItem = feedback.find((f) => f.id === feedbackId);
       if (feedbackItem) {
-        const todoText = `\n\n[TODO: ${feedbackItem.text}]\n\n`;
-        editor.commands.insertContent(todoText);
+        // Use the suggestion if available, otherwise fall back to TODO
+        const contentToInsert = feedbackItem.suggestion
+          ? `\n\n${feedbackItem.suggestion.replace(/\\n/g, '\n')}\n\n`
+          : `\n\n[TODO: ${feedbackItem.text}]\n\n`;
+        editor.commands.insertContent(contentToInsert);
       }
     }
   };

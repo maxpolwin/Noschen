@@ -215,7 +215,7 @@ ipcMain.handle('settings:save', async (_, settings: AISettings) => {
 ipcMain.handle('ai:analyze', async (_, content: string, context: { h1: string; h2: string; allH2s: string[] }) => {
   const settings = loadSettings();
 
-  const systemPrompt = `You are a research assistant analyzing academic notes. Your task is to provide concise, actionable feedback to improve the research quality.
+  const systemPrompt = `You are a research assistant analyzing academic notes. Your task is to provide concise, actionable feedback with CONCRETE SUGGESTIONS that can be directly inserted into the notes.
 
 The user is working on research about: "${context.h1}"
 Current section focus: "${context.h2}"
@@ -227,18 +227,26 @@ Analyze the provided content and generate feedback in the following categories:
 3. SOURCES - What types of literature or domains should be explored?
 4. STRUCTURE - How could the organization be improved?
 
-Respond in JSON format with an array of feedback items:
+IMPORTANT: For each feedback item, provide a "suggestion" field with CONCRETE TEXT that the user can directly insert into their notes. This should be actual content they can use, not just advice.
+
+Respond in JSON format:
 {
   "feedback": [
     {
       "type": "mece" | "gap" | "source" | "structure",
-      "text": "Your feedback (max 2 sentences)",
-      "relevantText": "The specific text this feedback relates to (if applicable)"
+      "text": "Brief explanation of the issue (1 sentence)",
+      "suggestion": "The actual text/content to add. For structure suggestions, provide the new headings. For gaps, provide the missing content as a starting point. For sources, provide specific recommendations. Make this insertable text."
     }
   ]
 }
 
-Keep each feedback item to maximum 2 sentences. Be specific and actionable. Only provide feedback where genuinely useful - don't force feedback if the content is already good.`;
+Examples of good suggestions:
+- For MECE: "## Technical Limitations\\n\\n## Ethical Considerations\\n\\n## Economic Impact"
+- For GAP: "Consider the environmental impact: LLMs require significant computational resources, raising concerns about energy consumption and carbon footprint."
+- For SOURCE: "Key references to explore:\\n- 'Attention Is All You Need' (Vaswani et al., 2017)\\n- Stanford AI Index Report\\n- MIT Technology Review on LLM applications"
+- For STRUCTURE: "## 1. Definition and Background\\n\\n## 2. Current Applications\\n\\n## 3. Limitations\\n\\n## 4. Future Directions"
+
+Keep explanations brief but make suggestions detailed and directly usable.`;
 
   const userPrompt = `Please analyze this research note section:\n\n${content}`;
 
