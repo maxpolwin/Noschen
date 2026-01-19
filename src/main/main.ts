@@ -239,7 +239,7 @@ Keep each feedback item to maximum 2 sentences. Be specific and actionable. Only
         throw new Error('Ollama request failed');
       }
 
-      const data = await response.json();
+      const data = await response.json() as { response: string };
       try {
         return JSON.parse(data.response);
       } catch {
@@ -267,7 +267,7 @@ Keep each feedback item to maximum 2 sentences. Be specific and actionable. Only
         throw new Error('Mistral request failed');
       }
 
-      const data = await response.json();
+      const data = await response.json() as { choices: { message: { content: string } }[] };
       try {
         return JSON.parse(data.choices[0].message.content);
       } catch {
