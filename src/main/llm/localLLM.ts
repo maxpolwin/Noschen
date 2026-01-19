@@ -1,18 +1,22 @@
-import { getLlama, LlamaChatSession, LlamaModel, LlamaContext } from 'node-llama-cpp';
 import * as path from 'path';
 import * as fs from 'fs';
 import { app } from 'electron';
 
-let llama: Awaited<ReturnType<typeof getLlama>> | null = null;
-let model: LlamaModel | null = null;
-let context: LlamaContext | null = null;
-let session: LlamaChatSession | null = null;
+// Use any types for dynamically imported ESM module
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let llamaModule: any = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let llama: any = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let model: any = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let context: any = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let session: any = null;
 let isInitialized = false;
 let initPromise: Promise<boolean> | null = null;
 
 function getModelPath(): string {
-  // In development, use the models folder in project root
-  // In production, use the extraResources folder
   const isDev = !app.isPackaged;
 
   if (isDev) {
@@ -22,13 +26,19 @@ function getModelPath(): string {
   }
 }
 
+async function loadLlamaModule() {
+  if (!llamaModule) {
+    // Dynamic import for ESM module
+    llamaModule = await import('node-llama-cpp');
+  }
+  return llamaModule;
+}
+
 export async function initializeLocalLLM(): Promise<boolean> {
-  // Return existing promise if already initializing
   if (initPromise) {
     return initPromise;
   }
 
-  // Return true if already initialized
   if (isInitialized && model && context) {
     return true;
   }
@@ -37,7 +47,6 @@ export async function initializeLocalLLM(): Promise<boolean> {
     try {
       const modelPath = getModelPath();
 
-      // Check if model file exists
       if (!fs.existsSync(modelPath)) {
         console.error('Model file not found:', modelPath);
         console.error('Please run: npm run download-model');
@@ -45,6 +54,10 @@ export async function initializeLocalLLM(): Promise<boolean> {
       }
 
       console.log('Initializing local LLM with model:', modelPath);
+
+      // Load the ESM module dynamically
+      const mod = await loadLlamaModule();
+      const { getLlama, LlamaChatSession } = mod;
 
       // Initialize llama
       llama = await getLlama();
@@ -54,7 +67,7 @@ export async function initializeLocalLLM(): Promise<boolean> {
         modelPath,
       });
 
-      // Create context with reasonable settings for the small model
+      // Create context
       context = await model.createContext({
         contextSize: 2048,
       });
@@ -91,17 +104,17 @@ export async function generateLocalResponse(
   }
 
   try {
-    // Reset the session for a fresh conversation
-    if (session) {
-      // Create a new session for each request to avoid context buildup
-      session = new LlamaChatSession({
-        contextSequence: context!.getSequence(),
-        systemPrompt: systemPrompt,
-      });
-    }
+    const mod = await loadLlamaModule();
+    const { LlamaChatSession } = mod;
+
+    // Create a new session for each request
+    session = new LlamaChatSession({
+      contextSequence: context.getSequence(),
+      systemPrompt: systemPrompt,
+    });
 
     // Generate response
-    const response = await session!.prompt(userPrompt, {
+    const response = await session.prompt(userPrompt, {
       maxTokens: 1024,
       temperature: 0.7,
     });
@@ -119,17 +132,21 @@ export async function checkLocalLLMAvailable(): Promise<boolean> {
 }
 
 export async function disposeLocalLLM(): Promise<void> {
-  if (context) {
-    await context.dispose();
-    context = null;
+  try {
+    if (context) {
+      await context.dispose();
+      context = null;
+    }
+    if (model) {
+      await model.dispose();
+      model = null;
+    }
+    session = null;
+    isInitialized = false;
+    console.log('Local LLM disposed');
+  } catch (error) {
+    console.error('Error disposing local LLM:', error);
   }
-  if (model) {
-    await model.dispose();
-    model = null;
-  }
-  session = null;
-  isInitialized = false;
-  console.log('Local LLM disposed');
 }
 
 export function isLocalLLMInitialized(): boolean {
