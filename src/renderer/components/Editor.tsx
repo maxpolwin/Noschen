@@ -168,13 +168,12 @@ function Editor({
       prev.map((f) => (f.id === feedbackId ? { ...f, status: 'accepted' } : f))
     );
 
-    // Insert a reminder placeholder at cursor position
+    // Insert a plain text TODO reminder at cursor position
     if (editor) {
       const feedbackItem = feedback.find((f) => f.id === feedbackId);
       if (feedbackItem) {
-        editor.commands.insertContent(
-          `<span class="reminder-placeholder" data-feedback-id="${feedbackId}">[TODO: ${feedbackItem.text.substring(0, 50)}...]</span> `
-        );
+        const todoText = `\n\n[TODO: ${feedbackItem.text}]\n\n`;
+        editor.commands.insertContent(todoText);
       }
     }
   };
