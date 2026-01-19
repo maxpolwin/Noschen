@@ -54,7 +54,9 @@ function saveSettings(settings: AISettings) {
 
 let mainWindow: BrowserWindow | null = null;
 
-function createWindow() {
+const isDev = !app.isPackaged;
+
+async function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -69,21 +71,39 @@ function createWindow() {
     },
   });
 
-  if (process.env.NODE_ENV === 'development') {
-    mainWindow.loadURL('http://localhost:5173');
+  if (isDev) {
+    // Try common dev server ports
+    const ports = [5173, 5174, 5175, 3000];
+    let loaded = false;
+
+    for (const port of ports) {
+      try {
+        await mainWindow.loadURL(`http://localhost:${port}`);
+        console.log(`Loaded dev server on port ${port}`);
+        loaded = true;
+        break;
+      } catch {
+        console.log(`Port ${port} not available, trying next...`);
+      }
+    }
+
+    if (!loaded) {
+      console.error('Could not connect to dev server');
+    }
+
     mainWindow.webContents.openDevTools();
   } else {
     mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   ensureDirectories();
-  createWindow();
+  await createWindow();
 
-  app.on('activate', () => {
+  app.on('activate', async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
+      await createWindow();
     }
   });
 });
