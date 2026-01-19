@@ -9,7 +9,7 @@ interface SettingsModalProps {
 
 function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
   const [settings, setSettings] = useState<AISettings>({
-    provider: 'ollama',
+    provider: 'builtin',
     ollamaModel: 'llama3.2',
     ollamaUrl: 'http://localhost:11434',
     mistralApiKey: '',
@@ -56,20 +56,32 @@ function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
               className="form-select"
               value={settings.provider}
               onChange={(e) =>
-                setSettings({ ...settings, provider: e.target.value as 'ollama' | 'mistral' })
+                setSettings({ ...settings, provider: e.target.value as 'builtin' | 'ollama' | 'mistral' })
               }
             >
+              <option value="builtin">Built-in AI (Qwen 0.5B)</option>
               <option value="ollama">Ollama (Local)</option>
               <option value="mistral">Mistral API (Cloud)</option>
             </select>
             <p className="form-hint">
-              {settings.provider === 'ollama'
+              {settings.provider === 'builtin'
+                ? 'Uses bundled Qwen 0.5B model. Works offline, no setup required.'
+                : settings.provider === 'ollama'
                 ? 'Uses a local LLM via Ollama for privacy-first AI feedback.'
                 : 'Uses Mistral API for AI feedback. Requires internet connection.'}
             </p>
           </div>
 
-          {settings.provider === 'ollama' ? (
+          {settings.provider === 'builtin' && (
+            <div className="form-group">
+              <p className="form-hint" style={{ background: 'var(--bg-tertiary)', padding: '12px', borderRadius: '6px' }}>
+                The built-in AI uses Qwen2.5-0.5B, a small but capable model that runs entirely on your device.
+                No internet connection or external setup required.
+              </p>
+            </div>
+          )}
+
+          {settings.provider === 'ollama' && (
             <>
               <div className="form-group">
                 <label className="form-label">Ollama URL</label>
@@ -96,7 +108,9 @@ function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
                 </p>
               </div>
             </>
-          ) : (
+          )}
+
+          {settings.provider === 'mistral' && (
             <div className="form-group">
               <label className="form-label">Mistral API Key</label>
               <input

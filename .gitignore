@@ -26,3 +26,6 @@ npm-debug.log*
 
 # User data (stored in app data folder, not repo)
 userData/
+
+# AI Models (large files, download separately)
+models/*.gguf

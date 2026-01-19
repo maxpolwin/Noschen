@@ -2,6 +2,12 @@ import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
+import {
+  initializeLocalLLM,
+  generateLocalResponse,
+  checkLocalLLMAvailable,
+  disposeLocalLLM,
+} from './llm/localLLM';
 
 interface Note {
   id: string;
@@ -13,7 +19,7 @@ interface Note {
 }
 
 interface AISettings {
-  provider: 'ollama' | 'mistral';
+  provider: 'builtin' | 'ollama' | 'mistral';
   ollamaModel: string;
   ollamaUrl: string;
   mistralApiKey: string;
@@ -30,7 +36,7 @@ function ensureDirectories() {
 
 function getDefaultSettings(): AISettings {
   return {
-    provider: 'ollama',
+    provider: 'builtin',
     ollamaModel: 'llama3.2',
     ollamaUrl: 'http://localhost:11434',
     mistralApiKey: '',
@@ -250,7 +256,30 @@ The "suggestion" field must contain 2-5 sentences of actual content or multiple 
   const userPrompt = `Please analyze this research note section:\n\n${content}`;
 
   try {
-    if (settings.provider === 'ollama') {
+    if (settings.provider === 'builtin') {
+      // Use built-in local LLM
+      const isAvailable = await checkLocalLLMAvailable();
+      if (!isAvailable) {
+        return { feedback: [], error: 'Built-in AI model not found. Please run: npm run download-model' };
+      }
+
+      await initializeLocalLLM();
+      const rawResponse = await generateLocalResponse(systemPrompt, userPrompt);
+
+      // Try to extract JSON from the response
+      try {
+        // Find JSON in the response (it might have extra text around it)
+        const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          return ensureSuggestions(parsed);
+        }
+        return { feedback: [] };
+      } catch {
+        console.error('Failed to parse local LLM response:', rawResponse);
+        return { feedback: [] };
+      }
+    } else if (settings.provider === 'ollama') {
       const response = await fetch(`${settings.ollamaUrl}/api/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -337,7 +366,14 @@ ipcMain.handle('ai:checkConnection', async () => {
   const settings = loadSettings();
 
   try {
-    if (settings.provider === 'ollama') {
+    if (settings.provider === 'builtin') {
+      const isAvailable = await checkLocalLLMAvailable();
+      if (isAvailable) {
+        // Try to initialize the model
+        return await initializeLocalLLM();
+      }
+      return false;
+    } else if (settings.provider === 'ollama') {
       const response = await fetch(`${settings.ollamaUrl}/api/tags`);
       return response.ok;
     } else {
@@ -347,4 +383,9 @@ ipcMain.handle('ai:checkConnection', async () => {
   } catch {
     return false;
   }
+});
+
+// Cleanup on app quit
+app.on('before-quit', async () => {
+  await disposeLocalLLM();
 });

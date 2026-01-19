@@ -8,7 +8,7 @@ export interface Note {
 }
 
 export interface AISettings {
-  provider: 'ollama' | 'mistral';
+  provider: 'builtin' | 'ollama' | 'mistral';
   ollamaModel: string;
   ollamaUrl: string;
   mistralApiKey: string;
