@@ -12,7 +12,8 @@
     "build:main": "tsc -p tsconfig.main.json",
     "start": "electron .",
     "package": "npm run build && electron-builder",
-    "download-model": "node scripts/download-model.js"
+    "download-model": "node scripts/download-model.js",
+    "generate-icon": "bash scripts/generate-icon.sh"
   },
   "keywords": [
     "note-taking",
@@ -87,7 +88,11 @@
           ]
         }
       ],
-      "icon": "build/icon.icns"
+      "icon": "build/icon.icns",
+      "extendInfo": {
+        "CFBundleName": "Noschen",
+        "CFBundleDisplayName": "Noschen"
+      }
     },
     "dmg": {
       "title": "Noschen",
