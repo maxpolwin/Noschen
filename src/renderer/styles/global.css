@@ -143,6 +143,12 @@ input::placeholder, textarea::placeholder {
   -webkit-app-region: no-drag;
 }
 
+.sidebar-footer {
+  padding: 8px;
+  border-top: 1px solid var(--border-color);
+  -webkit-app-region: no-drag;
+}
+
 .note-item {
   padding: 12px;
   border-radius: 6px;
