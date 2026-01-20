@@ -3,7 +3,7 @@ import Sidebar from './components/Sidebar';
 import Editor from './components/Editor';
 import SettingsModal from './components/SettingsModal';
 import EmptyState from './components/EmptyState';
-import { Note, AISettings, FeedbackItem } from '../shared/types';
+import { Note, AISettings, FeedbackItem, SpellcheckLanguage } from '../shared/types';
 
 declare global {
   interface Window {
@@ -23,6 +23,11 @@ declare global {
       ai: {
         analyze: (content: string, context: { h1: string; h2: string; allH2s: string[] }) => Promise<{ feedback: Omit<FeedbackItem, 'id' | 'status'>[]; error?: string }>;
         checkConnection: () => Promise<boolean>;
+        getStatus: () => Promise<{ provider: string; localLLM: { initialized: boolean; initializing: boolean; error: string | null }; modelPath: string | null }>;
+      };
+      spellcheck: {
+        getAvailableLanguages: () => Promise<SpellcheckLanguage[]>;
+        getCurrentLanguages: () => Promise<string[]>;
       };
     };
   }

@@ -87,6 +87,7 @@ function Editor({
     editorProps: {
       attributes: {
         class: 'prose prose-invert max-w-none',
+        spellcheck: 'true',
       },
     },
   });

@@ -14,6 +14,13 @@ interface AISettings {
   ollamaModel: string;
   ollamaUrl: string;
   mistralApiKey: string;
+  spellcheckEnabled: boolean;
+  spellcheckLanguages: string[];
+}
+
+interface SpellcheckLanguage {
+  code: string;
+  name: string;
 }
 
 interface LLMStatus {
@@ -61,6 +68,12 @@ const api = {
       ipcRenderer.invoke('ai:analyze', content, context),
     checkConnection: (): Promise<boolean> => ipcRenderer.invoke('ai:checkConnection'),
     getStatus: (): Promise<LLMStatus> => ipcRenderer.invoke('ai:getStatus'),
+  },
+  spellcheck: {
+    getAvailableLanguages: (): Promise<SpellcheckLanguage[]> =>
+      ipcRenderer.invoke('spellcheck:getAvailableLanguages'),
+    getCurrentLanguages: (): Promise<string[]> =>
+      ipcRenderer.invoke('spellcheck:getCurrentLanguages'),
   },
 };
 

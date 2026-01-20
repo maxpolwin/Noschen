@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, session, Menu, MenuItem } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
@@ -25,6 +25,8 @@ interface AISettings {
   ollamaModel: string;
   ollamaUrl: string;
   mistralApiKey: string;
+  spellcheckEnabled: boolean;
+  spellcheckLanguages: string[];
 }
 
 const NOTES_DIR = path.join(app.getPath('userData'), 'notes');
@@ -42,6 +44,8 @@ function getDefaultSettings(): AISettings {
     ollamaModel: 'llama3.2',
     ollamaUrl: 'http://localhost:11434',
     mistralApiKey: '',
+    spellcheckEnabled: true,
+    spellcheckLanguages: ['en-US'],
   };
 }
 
@@ -65,6 +69,8 @@ let mainWindow: BrowserWindow | null = null;
 const isDev = !app.isPackaged;
 
 async function createWindow() {
+  const settings = loadSettings();
+
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -76,7 +82,54 @@ async function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      spellcheck: settings.spellcheckEnabled,
     },
+  });
+
+  // Configure spellchecker languages
+  if (settings.spellcheckEnabled && settings.spellcheckLanguages.length > 0) {
+    session.defaultSession.setSpellCheckerLanguages(settings.spellcheckLanguages);
+  }
+
+  // Set up context menu for spelling corrections
+  mainWindow.webContents.on('context-menu', (event, params) => {
+    const menu = new Menu();
+
+    // Add spelling suggestions if there are any
+    if (params.misspelledWord) {
+      for (const suggestion of params.dictionarySuggestions.slice(0, 5)) {
+        menu.append(new MenuItem({
+          label: suggestion,
+          click: () => mainWindow?.webContents.replaceMisspelling(suggestion),
+        }));
+      }
+
+      if (params.dictionarySuggestions.length > 0) {
+        menu.append(new MenuItem({ type: 'separator' }));
+      }
+
+      // Add to dictionary option
+      menu.append(new MenuItem({
+        label: `Add "${params.misspelledWord}" to dictionary`,
+        click: () => mainWindow?.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord),
+      }));
+
+      menu.append(new MenuItem({ type: 'separator' }));
+    }
+
+    // Standard edit menu items
+    if (params.isEditable) {
+      menu.append(new MenuItem({ role: 'cut', label: 'Cut' }));
+      menu.append(new MenuItem({ role: 'copy', label: 'Copy' }));
+      menu.append(new MenuItem({ role: 'paste', label: 'Paste' }));
+      menu.append(new MenuItem({ role: 'selectAll', label: 'Select All' }));
+    } else if (params.selectionText) {
+      menu.append(new MenuItem({ role: 'copy', label: 'Copy' }));
+    }
+
+    if (menu.items.length > 0) {
+      menu.popup();
+    }
   });
 
   if (isDev) {
@@ -216,7 +269,61 @@ ipcMain.handle('settings:get', async () => {
 
 ipcMain.handle('settings:save', async (_, settings: AISettings) => {
   saveSettings(settings);
+
+  // Apply spellcheck settings at runtime
+  if (mainWindow) {
+    if (settings.spellcheckEnabled && settings.spellcheckLanguages.length > 0) {
+      session.defaultSession.setSpellCheckerLanguages(settings.spellcheckLanguages);
+    }
+  }
+
   return settings;
+});
+
+// Spellcheck operations
+ipcMain.handle('spellcheck:getAvailableLanguages', async () => {
+  // Return commonly available spellcheck languages
+  // Chromium downloads dictionaries on demand, these are the most common ones
+  return [
+    { code: 'en-US', name: 'English (US)' },
+    { code: 'en-GB', name: 'English (UK)' },
+    { code: 'en-AU', name: 'English (Australia)' },
+    { code: 'de-DE', name: 'German (Germany)' },
+    { code: 'de-AT', name: 'German (Austria)' },
+    { code: 'de-CH', name: 'German (Switzerland)' },
+    { code: 'fr-FR', name: 'French (France)' },
+    { code: 'es-ES', name: 'Spanish (Spain)' },
+    { code: 'es-MX', name: 'Spanish (Mexico)' },
+    { code: 'it-IT', name: 'Italian' },
+    { code: 'pt-BR', name: 'Portuguese (Brazil)' },
+    { code: 'pt-PT', name: 'Portuguese (Portugal)' },
+    { code: 'nl-NL', name: 'Dutch' },
+    { code: 'pl-PL', name: 'Polish' },
+    { code: 'ru-RU', name: 'Russian' },
+    { code: 'uk-UA', name: 'Ukrainian' },
+    { code: 'sv-SE', name: 'Swedish' },
+    { code: 'da-DK', name: 'Danish' },
+    { code: 'nb-NO', name: 'Norwegian' },
+    { code: 'fi-FI', name: 'Finnish' },
+    { code: 'cs-CZ', name: 'Czech' },
+    { code: 'hu-HU', name: 'Hungarian' },
+    { code: 'ro-RO', name: 'Romanian' },
+    { code: 'bg-BG', name: 'Bulgarian' },
+    { code: 'el-GR', name: 'Greek' },
+    { code: 'tr-TR', name: 'Turkish' },
+    { code: 'vi-VN', name: 'Vietnamese' },
+    { code: 'th-TH', name: 'Thai' },
+    { code: 'id-ID', name: 'Indonesian' },
+    { code: 'ms-MY', name: 'Malay' },
+    { code: 'ko-KR', name: 'Korean' },
+    { code: 'ja-JP', name: 'Japanese' },
+    { code: 'zh-CN', name: 'Chinese (Simplified)' },
+    { code: 'zh-TW', name: 'Chinese (Traditional)' },
+  ];
+});
+
+ipcMain.handle('spellcheck:getCurrentLanguages', async () => {
+  return session.defaultSession.getSpellCheckerLanguages();
 });
 
 // Helper function for Mistral API calls (used as fallback)

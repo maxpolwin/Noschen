@@ -12,6 +12,13 @@ export interface AISettings {
   ollamaModel: string;
   ollamaUrl: string;
   mistralApiKey: string;
+  spellcheckEnabled: boolean;
+  spellcheckLanguages: string[];
+}
+
+export interface SpellcheckLanguage {
+  code: string;
+  name: string;
 }
 
 export interface AIContext {
