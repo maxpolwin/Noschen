@@ -10,10 +10,20 @@ interface Note {
 }
 
 interface AISettings {
-  provider: 'ollama' | 'mistral';
+  provider: 'builtin' | 'ollama' | 'mistral';
   ollamaModel: string;
   ollamaUrl: string;
   mistralApiKey: string;
+}
+
+interface LLMStatus {
+  provider: string;
+  localLLM: {
+    initialized: boolean;
+    initializing: boolean;
+    error: string | null;
+  };
+  modelPath: string | null;
 }
 
 interface AIContext {
@@ -50,6 +60,7 @@ const api = {
     analyze: (content: string, context: AIContext): Promise<AIResponse> =>
       ipcRenderer.invoke('ai:analyze', content, context),
     checkConnection: (): Promise<boolean> => ipcRenderer.invoke('ai:checkConnection'),
+    getStatus: (): Promise<LLMStatus> => ipcRenderer.invoke('ai:getStatus'),
   },
 };
 

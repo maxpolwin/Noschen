@@ -2,153 +2,235 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { app } from 'electron';
 
-// Use any types for dynamically imported ESM module
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// State management
 let llamaModule: any = null;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let llama: any = null;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let model: any = null;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let context: any = null;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let session: any = null;
 let isInitialized = false;
-let initPromise: Promise<boolean> | null = null;
+let isInitializing = false;
+let initError: string | null = null;
+let lastInitAttempt = 0;
+
+// Configuration for small models
+const MODEL_CONFIG = {
+  contextSize: 2048, // Small context for edge models
+  maxTokens: 512,    // Limit output for speed
+  temperature: 0.7,
+  batchSize: 512,
+};
+
+// Retry configuration
+const INIT_RETRY_DELAY = 5000; // 5 seconds between retry attempts
 
 function getModelPath(): string {
   const isDev = !app.isPackaged;
+  const modelName = 'qwen2.5-0.5b-instruct-q4_k_m.gguf';
 
   if (isDev) {
-    return path.join(process.cwd(), 'models', 'qwen2.5-0.5b-instruct-q4_k_m.gguf');
+    return path.join(process.cwd(), 'models', modelName);
   } else {
-    return path.join(process.resourcesPath, 'models', 'qwen2.5-0.5b-instruct-q4_k_m.gguf');
+    return path.join(process.resourcesPath, 'models', modelName);
   }
 }
 
-async function loadLlamaModule() {
-  if (!llamaModule) {
-    // Dynamic import for ESM module
-    llamaModule = await import('node-llama-cpp');
+export async function checkLocalLLMAvailable(): Promise<{ available: boolean; error?: string }> {
+  const modelPath = getModelPath();
+
+  if (!fs.existsSync(modelPath)) {
+    return {
+      available: false,
+      error: `Model file not found: ${modelPath}. Run: npm run download-model`,
+    };
   }
-  return llamaModule;
+
+  const stats = fs.statSync(modelPath);
+  const sizeMB = stats.size / (1024 * 1024);
+
+  if (sizeMB < 100) {
+    return {
+      available: false,
+      error: 'Model file appears corrupted (too small). Re-download with: npm run download-model',
+    };
+  }
+
+  return { available: true };
 }
 
-export async function initializeLocalLLM(): Promise<boolean> {
-  if (initPromise) {
-    return initPromise;
+export async function initializeLocalLLM(): Promise<{ success: boolean; error?: string }> {
+  // Prevent concurrent initialization
+  if (isInitializing) {
+    return { success: false, error: 'Initialization already in progress' };
   }
 
+  // Return cached result if recently attempted
+  if (initError && Date.now() - lastInitAttempt < INIT_RETRY_DELAY) {
+    return { success: false, error: initError };
+  }
+
+  // Already initialized
   if (isInitialized && model && context) {
-    return true;
+    return { success: true };
   }
 
-  initPromise = (async () => {
-    try {
-      const modelPath = getModelPath();
+  isInitializing = true;
+  lastInitAttempt = Date.now();
 
-      if (!fs.existsSync(modelPath)) {
-        console.error('Model file not found:', modelPath);
-        console.error('Please run: npm run download-model');
-        return false;
-      }
-
-      console.log('Initializing local LLM with model:', modelPath);
-
-      // Load the ESM module dynamically
-      const mod = await loadLlamaModule();
-      const { getLlama, LlamaChatSession } = mod;
-
-      // Initialize llama
-      llama = await getLlama();
-
-      // Load the model
-      model = await llama.loadModel({
-        modelPath,
-      });
-
-      // Create context
-      context = await model.createContext({
-        contextSize: 2048,
-      });
-
-      // Create a chat session
-      session = new LlamaChatSession({
-        contextSequence: context.getSequence(),
-      });
-
-      isInitialized = true;
-      console.log('Local LLM initialized successfully');
-      return true;
-    } catch (error) {
-      console.error('Failed to initialize local LLM:', error);
-      isInitialized = false;
-      return false;
-    } finally {
-      initPromise = null;
+  try {
+    // Check model availability first
+    const availability = await checkLocalLLMAvailable();
+    if (!availability.available) {
+      throw new Error(availability.error);
     }
-  })();
 
-  return initPromise;
+    const modelPath = getModelPath();
+    console.log('[LocalLLM] Initializing with model:', modelPath);
+
+    // Dynamic import for ESM module
+    if (!llamaModule) {
+      console.log('[LocalLLM] Loading node-llama-cpp module...');
+      llamaModule = await import('node-llama-cpp');
+    }
+
+    const { getLlama } = llamaModule;
+
+    // Initialize llama runtime
+    if (!llama) {
+      console.log('[LocalLLM] Initializing llama runtime...');
+      llama = await getLlama();
+    }
+
+    // Load model
+    console.log('[LocalLLM] Loading model...');
+    model = await llama.loadModel({
+      modelPath,
+      gpuLayers: 0, // CPU only for stability - can adjust for Metal on Mac
+    });
+
+    // Create context
+    console.log('[LocalLLM] Creating context...');
+    context = await model.createContext({
+      contextSize: MODEL_CONFIG.contextSize,
+    });
+
+    isInitialized = true;
+    initError = null;
+    console.log('[LocalLLM] Initialization complete');
+
+    return { success: true };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown initialization error';
+    console.error('[LocalLLM] Initialization failed:', errorMessage);
+    initError = errorMessage;
+    isInitialized = false;
+
+    // Clean up partial state
+    await disposeLocalLLM();
+
+    return { success: false, error: errorMessage };
+  } finally {
+    isInitializing = false;
+  }
 }
 
 export async function generateLocalResponse(
   systemPrompt: string,
   userPrompt: string
-): Promise<string> {
-  if (!isInitialized || !session || !context || !model) {
-    const success = await initializeLocalLLM();
-    if (!success) {
-      throw new Error('Local LLM not initialized. Model file may be missing.');
+): Promise<{ response?: string; error?: string }> {
+  // Ensure initialized
+  if (!isInitialized || !model || !context) {
+    const initResult = await initializeLocalLLM();
+    if (!initResult.success) {
+      return { error: initResult.error };
     }
   }
 
   try {
-    const mod = await loadLlamaModule();
-    const { LlamaChatSession } = mod;
+    const { LlamaChatSession } = llamaModule;
 
-    // Create a new session for each request
-    session = new LlamaChatSession({
+    // Create a fresh session for this request
+    const session = new LlamaChatSession({
       contextSequence: context.getSequence(),
       systemPrompt: systemPrompt,
     });
 
-    // Generate response
+    console.log('[LocalLLM] Generating response...');
+    const startTime = Date.now();
+
     const response = await session.prompt(userPrompt, {
-      maxTokens: 1024,
-      temperature: 0.7,
+      maxTokens: MODEL_CONFIG.maxTokens,
+      temperature: MODEL_CONFIG.temperature,
     });
 
-    return response;
-  } catch (error) {
-    console.error('Local LLM generation failed:', error);
-    throw error;
-  }
-}
+    const duration = Date.now() - startTime;
+    console.log(`[LocalLLM] Response generated in ${duration}ms`);
 
-export async function checkLocalLLMAvailable(): Promise<boolean> {
-  const modelPath = getModelPath();
-  return fs.existsSync(modelPath);
+    return { response };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Generation failed';
+    console.error('[LocalLLM] Generation error:', errorMessage);
+
+    // Reset state on critical errors
+    if (errorMessage.includes('context') || errorMessage.includes('model')) {
+      await disposeLocalLLM();
+    }
+
+    return { error: errorMessage };
+  }
 }
 
 export async function disposeLocalLLM(): Promise<void> {
+  console.log('[LocalLLM] Disposing...');
+
   try {
     if (context) {
       await context.dispose();
-      context = null;
     }
+  } catch (e) {
+    console.error('[LocalLLM] Error disposing context:', e);
+  }
+
+  try {
     if (model) {
       await model.dispose();
-      model = null;
     }
-    session = null;
-    isInitialized = false;
-    console.log('Local LLM disposed');
-  } catch (error) {
-    console.error('Error disposing local LLM:', error);
+  } catch (e) {
+    console.error('[LocalLLM] Error disposing model:', e);
   }
+
+  context = null;
+  model = null;
+  isInitialized = false;
+  console.log('[LocalLLM] Disposed');
 }
 
-export function isLocalLLMInitialized(): boolean {
-  return isInitialized;
+export function getLocalLLMStatus(): {
+  initialized: boolean;
+  initializing: boolean;
+  error: string | null;
+} {
+  return {
+    initialized: isInitialized,
+    initializing: isInitializing,
+    error: initError,
+  };
+}
+
+// Utility: Estimate token count (rough approximation)
+export function estimateTokens(text: string): number {
+  // Rough estimate: ~4 characters per token for English
+  return Math.ceil(text.length / 4);
+}
+
+// Utility: Truncate text to fit within token budget
+export function truncateToTokenBudget(text: string, maxTokens: number): string {
+  const estimatedTokens = estimateTokens(text);
+  if (estimatedTokens <= maxTokens) {
+    return text;
+  }
+
+  // Truncate proportionally
+  const ratio = maxTokens / estimatedTokens;
+  const targetLength = Math.floor(text.length * ratio * 0.9); // 10% safety margin
+  return text.substring(0, targetLength) + '...';
 }

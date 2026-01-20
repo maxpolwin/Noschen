@@ -7,6 +7,8 @@ import {
   generateLocalResponse,
   checkLocalLLMAvailable,
   disposeLocalLLM,
+  truncateToTokenBudget,
+  getLocalLLMStatus,
 } from './llm/localLLM';
 
 interface Note {
@@ -217,66 +219,144 @@ ipcMain.handle('settings:save', async (_, settings: AISettings) => {
   return settings;
 });
 
-// AI operations
+// Helper function for Mistral API calls (used as fallback)
+async function callMistralAPI(apiKey: string, systemPrompt: string, userPrompt: string) {
+  try {
+    const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'mistral-small-latest',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        response_format: { type: 'json_object' },
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error('Mistral request failed');
+    }
+
+    const data = await response.json() as { choices: { message: { content: string } }[] };
+    const parsed = JSON.parse(data.choices[0].message.content);
+    return ensureSuggestions(parsed);
+  } catch (error) {
+    console.error('[AI] Mistral API fallback failed:', error);
+    return { feedback: [], error: 'Mistral API fallback failed' };
+  }
+}
+
+// AI operations - optimized prompts for different model sizes
+const PROMPTS = {
+  // Compact prompt for small edge models (Qwen 0.5B, Phi3-mini, etc.)
+  small: {
+    system: (ctx: { h1: string; h2: string; allH2s: string[] }) => `You analyze research notes and give JSON feedback.
+Topic: "${ctx.h1}"
+Section: "${ctx.h2}"
+Other sections: ${ctx.allH2s.slice(0, 5).join(', ')}
+
+Output JSON only:
+{"feedback":[{"type":"gap|mece|source","text":"issue","suggestion":"2-3 sentences to add"}]}`,
+    maxContentTokens: 800,
+  },
+  // Full prompt for larger models (Ollama, Mistral API)
+  large: {
+    system: (ctx: { h1: string; h2: string; allH2s: string[] }) => `You are a research assistant analyzing academic notes. Provide feedback with CONCRETE, INSERTABLE CONTENT.
+
+Research topic: "${ctx.h1}"
+Current section: "${ctx.h2}"
+Existing sections: ${ctx.allH2s.join(', ')}
+
+Analyze the content and provide feedback. Every feedback item MUST include a "suggestion" field with actual insertable text.
+
+Categories: MECE (missing categories), GAP (missing perspectives), SOURCE (literature), STRUCTURE (organization)
+
+JSON FORMAT:
+{"feedback":[{"type":"gap","text":"Brief description","suggestion":"2-5 sentences of actual content to insert."}]}`,
+    maxContentTokens: 2000,
+  },
+};
+
+// Extract current section content for focused analysis
+function extractCurrentSection(content: string, currentH2: string): string {
+  if (!currentH2) return content;
+
+  // Split by H2 headings and find the current section
+  const h2Pattern = /(?=##\s+[^#])|(?=<h2[^>]*>)/gi;
+  const sections = content.split(h2Pattern);
+
+  for (const section of sections) {
+    if (section.toLowerCase().includes(currentH2.toLowerCase())) {
+      return section;
+    }
+  }
+
+  // If not found, return the last portion of content
+  return content.slice(-2000);
+}
+
 ipcMain.handle('ai:analyze', async (_, content: string, context: { h1: string; h2: string; allH2s: string[] }) => {
   const settings = loadSettings();
 
-  const systemPrompt = `You are a research assistant analyzing academic notes. Provide feedback with CONCRETE, INSERTABLE CONTENT.
+  // Determine if using small or large model
+  const isSmallModel = settings.provider === 'builtin';
+  const promptConfig = isSmallModel ? PROMPTS.small : PROMPTS.large;
 
-Research topic: "${context.h1}"
-Current section: "${context.h2}"
-Existing sections: ${context.allH2s.join(', ')}
+  // For small models, extract only the current section
+  let analysisContent = content;
+  if (isSmallModel) {
+    analysisContent = extractCurrentSection(content, context.h2);
+    // Truncate to fit token budget
+    analysisContent = truncateToTokenBudget(analysisContent, promptConfig.maxContentTokens);
+  }
 
-Analyze the content and provide feedback. CRITICAL REQUIREMENT: Every feedback item MUST include a "suggestion" field containing actual text that can be directly inserted into the document.
-
-Categories:
-1. MECE - Missing or overlapping categories
-2. GAP - Missing aspects or perspectives
-3. SOURCE - Literature recommendations
-4. STRUCTURE - Organization improvements
-
-REQUIRED JSON FORMAT (suggestion field is MANDATORY for every item):
-{
-  "feedback": [
-    {
-      "type": "mece",
-      "text": "Brief issue description",
-      "suggestion": "## Missing Category 1\\n\\nContent placeholder for this category.\\n\\n## Missing Category 2\\n\\nContent placeholder."
-    },
-    {
-      "type": "gap",
-      "text": "Brief issue description",
-      "suggestion": "The environmental impact deserves attention: Large language models require significant computational resources, with estimates suggesting that training a single large model can emit as much carbon as five cars over their lifetimes."
-    }
-  ]
-}
-
-The "suggestion" field must contain 2-5 sentences of actual content or multiple headings with placeholder text. Never leave suggestion empty or omit it.`;
-
-  const userPrompt = `Please analyze this research note section:\n\n${content}`;
+  const systemPrompt = promptConfig.system(context);
+  const userPrompt = `Analyze:\n\n${analysisContent}`;
 
   try {
     if (settings.provider === 'builtin') {
-      // Use built-in local LLM
-      const isAvailable = await checkLocalLLMAvailable();
-      if (!isAvailable) {
-        return { feedback: [], error: 'Built-in AI model not found. Please run: npm run download-model' };
+      // Use built-in local LLM with better error handling
+      const availability = await checkLocalLLMAvailable();
+      if (!availability.available) {
+        console.error('[AI] Local model not available:', availability.error);
+        return { feedback: [], error: availability.error };
       }
 
-      await initializeLocalLLM();
-      const rawResponse = await generateLocalResponse(systemPrompt, userPrompt);
+      const initResult = await initializeLocalLLM();
+      if (!initResult.success) {
+        console.error('[AI] Failed to initialize local LLM:', initResult.error);
+        return { feedback: [], error: initResult.error };
+      }
+
+      console.log('[AI] Generating response with local model...');
+      const result = await generateLocalResponse(systemPrompt, userPrompt);
+
+      if (result.error) {
+        console.error('[AI] Local LLM generation error:', result.error);
+        // Graceful fallback: if Mistral API key exists, try that
+        if (settings.mistralApiKey) {
+          console.log('[AI] Falling back to Mistral API...');
+          return await callMistralAPI(settings.mistralApiKey, PROMPTS.large.system(context), `Analyze:\n\n${content}`);
+        }
+        return { feedback: [], error: result.error };
+      }
 
       // Try to extract JSON from the response
       try {
-        // Find JSON in the response (it might have extra text around it)
-        const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
+        const jsonMatch = result.response?.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           const parsed = JSON.parse(jsonMatch[0]);
           return ensureSuggestions(parsed);
         }
+        console.warn('[AI] No JSON found in response:', result.response?.slice(0, 200));
         return { feedback: [] };
-      } catch {
-        console.error('Failed to parse local LLM response:', rawResponse);
+      } catch (parseError) {
+        console.error('[AI] Failed to parse local LLM response:', result.response?.slice(0, 200));
         return { feedback: [] };
       }
     } else if (settings.provider === 'ollama') {
@@ -367,12 +447,14 @@ ipcMain.handle('ai:checkConnection', async () => {
 
   try {
     if (settings.provider === 'builtin') {
-      const isAvailable = await checkLocalLLMAvailable();
-      if (isAvailable) {
-        // Try to initialize the model
-        return await initializeLocalLLM();
+      const availability = await checkLocalLLMAvailable();
+      if (!availability.available) {
+        console.log('[AI] Local model not available:', availability.error);
+        return false;
       }
-      return false;
+      // Try to initialize the model
+      const initResult = await initializeLocalLLM();
+      return initResult.success;
     } else if (settings.provider === 'ollama') {
       const response = await fetch(`${settings.ollamaUrl}/api/tags`);
       return response.ok;
@@ -380,9 +462,22 @@ ipcMain.handle('ai:checkConnection', async () => {
       // For Mistral, just check if API key is set
       return !!settings.mistralApiKey;
     }
-  } catch {
+  } catch (error) {
+    console.error('[AI] Connection check failed:', error);
     return false;
   }
+});
+
+// Get detailed LLM status for debugging
+ipcMain.handle('ai:getStatus', async () => {
+  const settings = loadSettings();
+  const status = getLocalLLMStatus();
+
+  return {
+    provider: settings.provider,
+    localLLM: status,
+    modelPath: settings.provider === 'builtin' ? 'qwen2.5-0.5b-instruct-q4_k_m.gguf' : null,
+  };
 });
 
 // Cleanup on app quit
