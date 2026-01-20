@@ -23,7 +23,7 @@ declare global {
       ai: {
         analyze: (content: string, context: { h1: string; h2: string; allH2s: string[] }) => Promise<{ feedback: Omit<FeedbackItem, 'id' | 'status'>[]; error?: string }>;
         checkConnection: () => Promise<boolean>;
-        getStatus: () => Promise<{ provider: string; localLLM: { initialized: boolean; initializing: boolean; error: string | null }; modelPath: string | null }>;
+        getStatus: () => Promise<{ provider: string; localLLM: { initialized: boolean; initializing: boolean; error: string | null; gpuAcceleration: { enabled: boolean; type: string; layers: number } }; modelPath: string | null }>;
       };
       spellcheck: {
         getAvailableLanguages: () => Promise<SpellcheckLanguage[]>;

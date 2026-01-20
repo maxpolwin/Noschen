@@ -29,6 +29,11 @@ interface LLMStatus {
     initialized: boolean;
     initializing: boolean;
     error: string | null;
+    gpuAcceleration: {
+      enabled: boolean;
+      type: string;
+      layers: number;
+    };
   };
   modelPath: string | null;
 }

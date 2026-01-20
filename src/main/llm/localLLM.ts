@@ -1,5 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
 import { app } from 'electron';
 
 // State management
@@ -12,12 +13,29 @@ let isInitializing = false;
 let initError: string | null = null;
 let lastInitAttempt = 0;
 
+// Detect Apple Silicon for Metal acceleration
+function isAppleSilicon(): boolean {
+  return process.platform === 'darwin' && os.arch() === 'arm64';
+}
+
+// Get optimal GPU layers for the platform
+function getOptimalGpuLayers(): number {
+  if (isAppleSilicon()) {
+    // Enable Metal acceleration on Apple Silicon
+    // For Qwen 0.5B Q4_K_M, 33 layers is typical for full GPU offload
+    return 33;
+  }
+  // CPU-only for other platforms (or set to positive number for CUDA/ROCm)
+  return 0;
+}
+
 // Configuration for small models
 const MODEL_CONFIG = {
   contextSize: 2048, // Small context for edge models
   maxTokens: 512,    // Limit output for speed
   temperature: 0.7,
   batchSize: 512,
+  gpuLayers: getOptimalGpuLayers(),
 };
 
 // Retry configuration
@@ -100,11 +118,12 @@ export async function initializeLocalLLM(): Promise<{ success: boolean; error?: 
       llama = await getLlama();
     }
 
-    // Load model
-    console.log('[LocalLLM] Loading model...');
+    // Load model with GPU acceleration where available
+    const gpuLayers = MODEL_CONFIG.gpuLayers;
+    console.log(`[LocalLLM] Loading model with ${gpuLayers} GPU layers (Metal: ${isAppleSilicon()})...`);
     model = await llama.loadModel({
       modelPath,
-      gpuLayers: 0, // CPU only for stability - can adjust for Metal on Mac
+      gpuLayers, // Metal acceleration on Apple Silicon, CPU on others
     });
 
     // Create context
@@ -208,11 +227,22 @@ export function getLocalLLMStatus(): {
   initialized: boolean;
   initializing: boolean;
   error: string | null;
+  gpuAcceleration: {
+    enabled: boolean;
+    type: string;
+    layers: number;
+  };
 } {
+  const gpuEnabled = MODEL_CONFIG.gpuLayers > 0;
   return {
     initialized: isInitialized,
     initializing: isInitializing,
     error: initError,
+    gpuAcceleration: {
+      enabled: gpuEnabled,
+      type: isAppleSilicon() ? 'Metal (Apple Silicon)' : (gpuEnabled ? 'GPU' : 'CPU'),
+      layers: MODEL_CONFIG.gpuLayers,
+    },
   };
 }
 
