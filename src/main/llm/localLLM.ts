@@ -3,6 +3,10 @@ import * as fs from 'fs';
 import * as os from 'os';
 import { app } from 'electron';
 
+// Force real ESM dynamic import (bypasses TypeScript's CommonJS transformation)
+// This is necessary because node-llama-cpp v3.x is ESM-only with top-level await
+const dynamicImport = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<any>;
+
 // State management
 let llamaModule: any = null;
 let llama: any = null;
@@ -104,10 +108,10 @@ export async function initializeLocalLLM(): Promise<{ success: boolean; error?: 
     const modelPath = getModelPath();
     console.log('[LocalLLM] Initializing with model:', modelPath);
 
-    // Dynamic import for ESM module
+    // Dynamic import for ESM module (using dynamicImport to bypass CommonJS transformation)
     if (!llamaModule) {
       console.log('[LocalLLM] Loading node-llama-cpp module...');
-      llamaModule = await import('node-llama-cpp');
+      llamaModule = await dynamicImport('node-llama-cpp');
     }
 
     const { getLlama } = llamaModule;
