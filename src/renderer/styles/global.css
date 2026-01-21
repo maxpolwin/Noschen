@@ -1,4 +1,31 @@
 :root {
+  /* ========== DESIGN SYSTEM ========== */
+
+  /* Typography Scale (1.25 ratio) */
+  --font-size-xs: 0.64rem;    /* ~10px - micro labels */
+  --font-size-sm: 0.8rem;     /* ~13px - captions, hints */
+  --font-size-base: 1rem;     /* 16px - body */
+  --font-size-md: 1.125rem;   /* 18px - emphasized */
+  --font-size-lg: 1.25rem;    /* 20px - small headings */
+  --font-size-xl: 1.563rem;   /* 25px - section headings */
+  --font-size-2xl: 1.953rem;  /* 31px - page titles */
+
+  /* Spacing Scale (4px base) */
+  --space-1: 0.25rem;   /* 4px */
+  --space-2: 0.5rem;    /* 8px */
+  --space-3: 0.75rem;   /* 12px */
+  --space-4: 1rem;      /* 16px */
+  --space-5: 1.25rem;   /* 20px */
+  --space-6: 1.5rem;    /* 24px */
+  --space-8: 2rem;      /* 32px */
+
+  /* Border Radius Scale */
+  --radius-sm: 6px;     /* badges, chips */
+  --radius-md: 10px;    /* inputs, buttons */
+  --radius-lg: 14px;    /* panels, modals */
+
+  /* ========== COLORS ========== */
+
   /* Modern dark theme with depth */
   --bg-primary: #09090b;
   --bg-secondary: #18181b;
@@ -20,11 +47,11 @@
   --border-color: rgba(63, 63, 70, 0.6);
   --border-subtle: rgba(63, 63, 70, 0.3);
 
-  /* Accent with gradient */
-  --accent-color: #8b5cf6;
+  /* Refined Accent (richer purple-600) */
+  --accent-color: #9333ea;
   --accent-hover: #7c3aed;
-  --accent-glow: rgba(139, 92, 246, 0.3);
-  --accent-gradient: linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%);
+  --accent-glow: rgba(147, 51, 234, 0.25);
+  --accent-gradient: linear-gradient(135deg, #9333ea 0%, #7c3aed 100%);
 
   /* Status colors */
   --success-color: #22c55e;
@@ -34,26 +61,24 @@
   --error-color: #ef4444;
   --error-glow: rgba(239, 68, 68, 0.2);
 
-  /* Feedback colors - refined */
-  --mece-bg: rgba(139, 92, 246, 0.15);
-  --mece-text: #a78bfa;
-  --mece-border: rgba(139, 92, 246, 0.4);
-  --mece-glow: rgba(139, 92, 246, 0.1);
+  /* Feedback colors - refined, less saturated, subtle borders */
+  --mece-bg: rgba(147, 51, 234, 0.08);
+  --mece-text: #c084fc;
+  --mece-border: rgba(147, 51, 234, 0.3);
 
-  --gap-bg: rgba(59, 130, 246, 0.15);
-  --gap-text: #60a5fa;
-  --gap-border: rgba(59, 130, 246, 0.4);
-  --gap-glow: rgba(59, 130, 246, 0.1);
+  --gap-bg: rgba(99, 102, 241, 0.08);
+  --gap-text: #a5b4fc;
+  --gap-border: rgba(99, 102, 241, 0.3);
 
-  --source-bg: rgba(34, 197, 94, 0.15);
-  --source-text: #4ade80;
-  --source-border: rgba(34, 197, 94, 0.4);
-  --source-glow: rgba(34, 197, 94, 0.1);
+  --source-bg: rgba(16, 185, 129, 0.08);
+  --source-text: #6ee7b7;
+  --source-border: rgba(16, 185, 129, 0.3);
 
-  --structure-bg: rgba(245, 158, 11, 0.15);
-  --structure-text: #fbbf24;
-  --structure-border: rgba(245, 158, 11, 0.4);
-  --structure-glow: rgba(245, 158, 11, 0.1);
+  --structure-bg: rgba(217, 119, 6, 0.08);
+  --structure-text: #fcd34d;
+  --structure-border: rgba(217, 119, 6, 0.3);
+
+  /* ========== TIMING & SHADOWS ========== */
 
   /* Timing */
   --transition-fast: 0.15s ease;
@@ -96,7 +121,7 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
   background: var(--bg-primary);
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: var(--font-size-base);
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -116,9 +141,9 @@ input, textarea, select {
   background: var(--bg-tertiary);
   border: 1px solid var(--border-color);
   color: var(--text-primary);
-  border-radius: 8px;
-  padding: 10px 14px;
-  font-size: 14px;
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--font-size-sm);
   transition: all var(--transition-fast);
 }
 
@@ -183,12 +208,12 @@ input::placeholder, textarea::placeholder {
 
 .search-input {
   width: 100%;
-  padding: 10px 14px;
+  padding: var(--space-3) var(--space-4);
   padding-left: 40px;
   background: var(--bg-tertiary);
   border: 1px solid var(--border-subtle);
-  border-radius: 10px;
-  font-size: 13px;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
   transition: all var(--transition-fast);
 }
 
@@ -227,10 +252,10 @@ input::placeholder, textarea::placeholder {
 }
 
 .note-item {
-  padding: 14px 16px;
-  border-radius: 10px;
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
   cursor: pointer;
-  margin-bottom: 6px;
+  margin-bottom: var(--space-2);
   transition: all var(--transition-fast);
   border: 1px solid transparent;
   position: relative;
@@ -242,9 +267,9 @@ input::placeholder, textarea::placeholder {
   position: absolute;
   left: 0;
   top: 0;
-  width: 3px;
+  width: 4px;
   height: 100%;
-  background: var(--accent-gradient);
+  background: var(--accent-color);
   opacity: 0;
   transition: opacity var(--transition-fast);
 }
@@ -255,26 +280,33 @@ input::placeholder, textarea::placeholder {
 }
 
 .note-item.active {
-  background: var(--bg-tertiary);
+  background: linear-gradient(90deg, rgba(147, 51, 234, 0.12) 0%, var(--bg-tertiary) 100%);
   border-color: var(--border-color);
+  box-shadow: inset 0 0 0 1px rgba(147, 51, 234, 0.08);
 }
 
 .note-item.active::before {
   opacity: 1;
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+
+.note-item.active .note-item-title {
+  color: var(--accent-color);
 }
 
 .note-item-title {
   font-weight: 600;
   color: var(--text-primary);
-  margin-bottom: 4px;
+  margin-bottom: var(--space-1);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 14px;
+  font-size: var(--font-size-sm);
+  transition: color var(--transition-fast);
 }
 
 .note-item-date {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted);
   font-weight: 500;
   text-transform: uppercase;
@@ -282,12 +314,12 @@ input::placeholder, textarea::placeholder {
 }
 
 .note-item-preview {
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  margin-top: 6px;
+  margin-top: var(--space-2);
   line-height: 1.4;
 }
 
@@ -295,17 +327,17 @@ input::placeholder, textarea::placeholder {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: var(--space-2);
   width: 100%;
-  padding: 12px;
-  margin-top: 16px;
+  padding: var(--space-3);
+  margin-top: var(--space-4);
   background: var(--accent-gradient);
   color: white;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   font-weight: 600;
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   letter-spacing: 0.01em;
-  box-shadow: var(--shadow-md), 0 0 20px var(--accent-glow);
+  box-shadow: var(--shadow-md);
   transition: all var(--transition-fast);
 }
 
@@ -349,12 +381,12 @@ input::placeholder, textarea::placeholder {
 .editor-header-btn {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 14px;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
   background: var(--bg-tertiary);
   border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-  font-size: 13px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
   font-weight: 500;
   color: var(--text-secondary);
   transition: all var(--transition-fast);
@@ -541,8 +573,8 @@ input::placeholder, textarea::placeholder {
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
   border: 1px solid var(--border-subtle);
-  border-radius: 16px;
-  margin: 24px 0;
+  border-radius: var(--radius-lg);
+  margin: var(--space-6) 0;
   overflow: hidden;
   animation: slideUp 0.3s ease-out;
   box-shadow: var(--shadow-md);
@@ -563,17 +595,17 @@ input::placeholder, textarea::placeholder {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px;
+  padding: var(--space-4) var(--space-5);
   background: var(--bg-tertiary);
   border-bottom: 1px solid var(--border-subtle);
 }
 
 .feedback-panel-title {
   font-weight: 600;
-  font-size: 14px;
+  font-size: var(--font-size-sm);
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-3);
   color: var(--text-primary);
 }
 
@@ -596,16 +628,16 @@ input::placeholder, textarea::placeholder {
 }
 
 .feedback-list {
-  padding: 12px;
+  padding: var(--space-3);
 }
 
 .feedback-item {
   display: flex;
   align-items: flex-start;
-  gap: 14px;
-  padding: 16px;
-  border-radius: 12px;
-  margin-bottom: 8px;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-2);
   transition: all var(--transition-fast);
   border: 1px solid transparent;
   animation: fadeIn 0.2s ease-out;
@@ -622,9 +654,9 @@ input::placeholder, textarea::placeholder {
 }
 
 .feedback-item-badge {
-  padding: 6px 10px;
-  border-radius: 6px;
-  font-size: 10px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -634,25 +666,25 @@ input::placeholder, textarea::placeholder {
 .feedback-item-badge.mece {
   background: var(--mece-bg);
   color: var(--mece-text);
-  box-shadow: 0 0 12px var(--mece-glow);
+  border: 1px solid var(--mece-border);
 }
 
 .feedback-item-badge.gap {
   background: var(--gap-bg);
   color: var(--gap-text);
-  box-shadow: 0 0 12px var(--gap-glow);
+  border: 1px solid var(--gap-border);
 }
 
 .feedback-item-badge.source {
   background: var(--source-bg);
   color: var(--source-text);
-  box-shadow: 0 0 12px var(--source-glow);
+  border: 1px solid var(--source-border);
 }
 
 .feedback-item-badge.structure {
   background: var(--structure-bg);
   color: var(--structure-text);
-  box-shadow: 0 0 12px var(--structure-glow);
+  border: 1px solid var(--structure-border);
 }
 
 .feedback-item-content {
@@ -661,25 +693,25 @@ input::placeholder, textarea::placeholder {
 }
 
 .feedback-item-text {
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   color: var(--text-primary);
   line-height: 1.6;
 }
 
 .feedback-item-related {
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted);
-  margin-top: 8px;
+  margin-top: var(--space-2);
   font-style: italic;
 }
 
 .feedback-item-suggestion {
-  margin-top: 12px;
-  padding: 12px;
+  margin-top: var(--space-3);
+  padding: var(--space-3);
   background: var(--bg-primary);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border-subtle);
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
   font-family: 'SF Mono', 'JetBrains Mono', Monaco, monospace;
   white-space: pre-wrap;
@@ -688,31 +720,29 @@ input::placeholder, textarea::placeholder {
 
 .feedback-item-actions {
   display: flex;
-  gap: 6px;
+  gap: var(--space-2);
   flex-shrink: 0;
 }
 
 .feedback-item-btn {
-  padding: 8px 12px;
-  border-radius: 8px;
-  font-size: 12px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
   font-weight: 600;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
   transition: all var(--transition-fast);
 }
 
 .feedback-item-btn.accept {
   background: var(--success-color);
   color: white;
-  box-shadow: 0 2px 8px var(--success-glow);
 }
 
 .feedback-item-btn.accept:hover {
   background: #16a34a;
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px var(--success-glow);
 }
 
 .feedback-item-btn.reject {
@@ -795,7 +825,7 @@ input::placeholder, textarea::placeholder {
 .modal {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   width: 100%;
   max-width: 480px;
   max-height: 85vh;
@@ -819,20 +849,20 @@ input::placeholder, textarea::placeholder {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 20px 24px;
+  padding: var(--space-5) var(--space-6);
   border-bottom: 1px solid var(--border-subtle);
 }
 
 .modal-title {
-  font-size: 18px;
+  font-size: var(--font-size-md);
   font-weight: 600;
   letter-spacing: -0.01em;
 }
 
 .modal-close {
-  padding: 8px;
+  padding: var(--space-2);
   color: var(--text-muted);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   transition: all var(--transition-fast);
 }
 
@@ -843,17 +873,17 @@ input::placeholder, textarea::placeholder {
 
 .modal-tabs {
   display: flex;
-  gap: 4px;
-  padding: 0 24px;
+  gap: var(--space-1);
+  padding: 0 var(--space-6);
   border-bottom: 1px solid var(--border-subtle);
 }
 
 .modal-tab {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 12px 16px;
-  font-size: 13px;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--font-size-sm);
   font-weight: 500;
   color: var(--text-muted);
   border-bottom: 2px solid transparent;
@@ -871,7 +901,7 @@ input::placeholder, textarea::placeholder {
 }
 
 .modal-body {
-  padding: 24px;
+  padding: var(--space-6);
   max-height: 60vh;
   overflow-y: auto;
 }
@@ -913,22 +943,22 @@ input::placeholder, textarea::placeholder {
 .language-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 8px;
+  gap: var(--space-2);
   max-height: 280px;
   overflow-y: auto;
-  padding: 4px;
+  padding: var(--space-1);
 }
 
 .language-chip {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  font-size: 12px;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
   background: var(--bg-tertiary);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   transition: all var(--transition-fast);
   text-align: left;
@@ -940,21 +970,21 @@ input::placeholder, textarea::placeholder {
 }
 
 .language-chip.selected {
-  background: rgba(139, 92, 246, 0.15);
+  background: rgba(147, 51, 234, 0.12);
   border-color: var(--accent-color);
   color: var(--accent-color);
 }
 
 .form-group {
-  margin-bottom: 20px;
+  margin-bottom: var(--space-5);
 }
 
 .form-label {
   display: block;
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--text-primary);
-  margin-bottom: 8px;
+  margin-bottom: var(--space-2);
 }
 
 .form-input {
@@ -963,12 +993,12 @@ input::placeholder, textarea::placeholder {
 
 .form-select {
   width: 100%;
-  padding: 10px 14px;
+  padding: var(--space-3) var(--space-4);
   background: var(--bg-tertiary);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: var(--font-size-sm);
   cursor: pointer;
   transition: all var(--transition-fast);
 }
@@ -980,9 +1010,9 @@ input::placeholder, textarea::placeholder {
 }
 
 .form-hint {
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted);
-  margin-top: 6px;
+  margin-top: var(--space-2);
   line-height: 1.5;
 }
 
@@ -1047,28 +1077,27 @@ input::placeholder, textarea::placeholder {
 
 .modal-footer {
   display: flex;
-  gap: 10px;
+  gap: var(--space-3);
   justify-content: flex-end;
-  padding: 20px 24px;
+  padding: var(--space-5) var(--space-6);
   border-top: 1px solid var(--border-subtle);
 }
 
 /* ===================== BUTTONS ===================== */
 .btn {
-  padding: 10px 18px;
-  border-radius: 8px;
-  font-size: 13px;
+  padding: var(--space-3) var(--space-5);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
   font-weight: 600;
   transition: all var(--transition-fast);
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .btn-primary {
   background: var(--accent-gradient);
   color: white;
-  box-shadow: 0 2px 8px var(--accent-glow);
 }
 
 .btn-primary:hover {
@@ -1153,13 +1182,13 @@ input::placeholder, textarea::placeholder {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: var(--space-2);
   width: 100%;
-  padding: 12px;
+  padding: var(--space-3);
   background: var(--bg-tertiary);
   border: 1px solid var(--border-subtle);
-  border-radius: 10px;
-  font-size: 13px;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
   font-weight: 500;
   color: var(--text-secondary);
   transition: all var(--transition-fast);
