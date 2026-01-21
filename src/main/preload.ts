@@ -9,6 +9,19 @@ interface Note {
   excludedSections: string[];
 }
 
+interface FeedbackTypeConfig {
+  id: string;
+  label: string;
+  description: string;
+  color: string;
+  enabled: boolean;
+}
+
+interface PromptConfig {
+  systemPrompt: string;
+  feedbackTypes: FeedbackTypeConfig[];
+}
+
 interface AISettings {
   provider: 'builtin' | 'ollama' | 'mistral';
   ollamaModel: string;
@@ -20,6 +33,7 @@ interface AISettings {
   llmContextSize: number;
   llmMaxTokens: number;
   llmBatchSize: number;
+  promptConfig: PromptConfig;
 }
 
 interface SpellcheckLanguage {
@@ -49,8 +63,9 @@ interface AIContext {
 }
 
 interface FeedbackItem {
-  type: 'mece' | 'gap' | 'source' | 'structure';
+  type: string;  // Accepts custom types
   text: string;
+  suggestion?: string;
   relevantText?: string;
 }
 

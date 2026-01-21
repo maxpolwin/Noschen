@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { X, Languages, Check } from 'lucide-react';
-import { AISettings, SpellcheckLanguage } from '../../shared/types';
+import { X, Languages, Check, Plus, Trash2, RotateCcw, MessageSquare } from 'lucide-react';
+import { AISettings, SpellcheckLanguage, FeedbackTypeConfig, DEFAULT_FEEDBACK_TYPES, DEFAULT_SYSTEM_PROMPT } from '../../shared/types';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -19,12 +19,16 @@ function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
     llmContextSize: 2048,
     llmMaxTokens: 1536,
     llmBatchSize: 512,
+    promptConfig: {
+      systemPrompt: DEFAULT_SYSTEM_PROMPT,
+      feedbackTypes: DEFAULT_FEEDBACK_TYPES,
+    },
   });
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
   const [availableLanguages, setAvailableLanguages] = useState<SpellcheckLanguage[]>([]);
-  const [activeTab, setActiveTab] = useState<'ai' | 'editor'>('ai');
+  const [activeTab, setActiveTab] = useState<'ai' | 'editor' | 'prompts'>('ai');
 
   useEffect(() => {
     loadSettings();
@@ -42,6 +46,10 @@ function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
       llmContextSize: loaded.llmContextSize ?? 2048,
       llmMaxTokens: loaded.llmMaxTokens ?? 1536,
       llmBatchSize: loaded.llmBatchSize ?? 512,
+      promptConfig: loaded.promptConfig ?? {
+        systemPrompt: DEFAULT_SYSTEM_PROMPT,
+        feedbackTypes: DEFAULT_FEEDBACK_TYPES,
+      },
     });
   };
 
@@ -79,6 +87,69 @@ function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
     setTestResult(connected ? 'success' : 'error');
   };
 
+  // Prompt configuration helpers
+  const updateSystemPrompt = (prompt: string) => {
+    setSettings({
+      ...settings,
+      promptConfig: {
+        ...settings.promptConfig,
+        systemPrompt: prompt,
+      },
+    });
+  };
+
+  const updateFeedbackType = (id: string, updates: Partial<FeedbackTypeConfig>) => {
+    setSettings({
+      ...settings,
+      promptConfig: {
+        ...settings.promptConfig,
+        feedbackTypes: settings.promptConfig.feedbackTypes.map((t) =>
+          t.id === id ? { ...t, ...updates } : t
+        ),
+      },
+    });
+  };
+
+  const addFeedbackType = () => {
+    const newId = `custom_${Date.now()}`;
+    const newType: FeedbackTypeConfig = {
+      id: newId,
+      label: 'New Type',
+      description: 'Description of what this feedback type checks for',
+      color: '#888888',
+      enabled: true,
+    };
+    setSettings({
+      ...settings,
+      promptConfig: {
+        ...settings.promptConfig,
+        feedbackTypes: [...settings.promptConfig.feedbackTypes, newType],
+      },
+    });
+  };
+
+  const removeFeedbackType = (id: string) => {
+    setSettings({
+      ...settings,
+      promptConfig: {
+        ...settings.promptConfig,
+        feedbackTypes: settings.promptConfig.feedbackTypes.filter((t) => t.id !== id),
+      },
+    });
+  };
+
+  const resetToDefaults = () => {
+    if (confirm('Reset all prompts and feedback types to defaults?')) {
+      setSettings({
+        ...settings,
+        promptConfig: {
+          systemPrompt: DEFAULT_SYSTEM_PROMPT,
+          feedbackTypes: DEFAULT_FEEDBACK_TYPES,
+        },
+      });
+    }
+  };
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -96,6 +167,13 @@ function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
             onClick={() => setActiveTab('ai')}
           >
             AI Provider
+          </button>
+          <button
+            className={`modal-tab ${activeTab === 'prompts' ? 'active' : ''}`}
+            onClick={() => setActiveTab('prompts')}
+          >
+            <MessageSquare size={16} />
+            Prompts
           </button>
           <button
             className={`modal-tab ${activeTab === 'editor' ? 'active' : ''}`}
@@ -336,6 +414,191 @@ function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
                       : 'Connection failed. Please check your settings.'}
                   </p>
                 )}
+              </div>
+            </>
+          )}
+
+          {activeTab === 'prompts' && (
+            <>
+              {/* Reset to Defaults */}
+              <div className="form-group">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                  <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                    Customize the AI prompts and feedback types
+                  </span>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={resetToDefaults}
+                    style={{ fontSize: '11px', padding: '6px 12px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                  >
+                    <RotateCcw size={12} />
+                    Reset Defaults
+                  </button>
+                </div>
+              </div>
+
+              {/* System Prompt */}
+              <div className="form-group">
+                <label className="form-label">System Prompt</label>
+                <textarea
+                  value={settings.promptConfig?.systemPrompt || DEFAULT_SYSTEM_PROMPT}
+                  onChange={(e) => updateSystemPrompt(e.target.value)}
+                  style={{
+                    width: '100%',
+                    minHeight: '200px',
+                    padding: '12px',
+                    background: 'var(--bg-tertiary)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '8px',
+                    color: 'var(--text-primary)',
+                    fontSize: '12px',
+                    fontFamily: 'monospace',
+                    resize: 'vertical',
+                    lineHeight: 1.5,
+                  }}
+                />
+                <p className="form-hint">
+                  Available variables: {'{{topic}}'}, {'{{section}}'}, {'{{otherSections}}'}, {'{{feedbackTypes}}'}
+                </p>
+              </div>
+
+              {/* Feedback Types */}
+              <div className="form-group">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                  <label className="form-label" style={{ marginBottom: 0 }}>Feedback Types</label>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={addFeedbackType}
+                    style={{ fontSize: '11px', padding: '6px 12px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                  >
+                    <Plus size={12} />
+                    Add Type
+                  </button>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {(settings.promptConfig?.feedbackTypes || DEFAULT_FEEDBACK_TYPES).map((type) => (
+                    <div
+                      key={type.id}
+                      style={{
+                        background: 'var(--bg-tertiary)',
+                        border: '1px solid var(--border-subtle)',
+                        borderRadius: '8px',
+                        padding: '12px',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                        {/* Color picker */}
+                        <input
+                          type="color"
+                          value={type.color}
+                          onChange={(e) => updateFeedbackType(type.id, { color: e.target.value })}
+                          style={{
+                            width: '28px',
+                            height: '28px',
+                            padding: 0,
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: 'pointer',
+                          }}
+                        />
+
+                        {/* ID (editable for custom types) */}
+                        <input
+                          type="text"
+                          value={type.id}
+                          onChange={(e) => {
+                            const newId = e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '');
+                            if (newId) {
+                              const types = settings.promptConfig.feedbackTypes.map((t) =>
+                                t.id === type.id ? { ...t, id: newId } : t
+                              );
+                              setSettings({
+                                ...settings,
+                                promptConfig: { ...settings.promptConfig, feedbackTypes: types },
+                              });
+                            }
+                          }}
+                          placeholder="id"
+                          style={{
+                            width: '80px',
+                            padding: '4px 8px',
+                            background: 'var(--bg-secondary)',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '4px',
+                            color: 'var(--text-muted)',
+                            fontSize: '11px',
+                            fontFamily: 'monospace',
+                          }}
+                        />
+
+                        {/* Label */}
+                        <input
+                          type="text"
+                          value={type.label}
+                          onChange={(e) => updateFeedbackType(type.id, { label: e.target.value })}
+                          placeholder="Label"
+                          style={{
+                            flex: 1,
+                            padding: '4px 8px',
+                            background: 'var(--bg-secondary)',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '4px',
+                            color: 'var(--text-primary)',
+                            fontSize: '12px',
+                          }}
+                        />
+
+                        {/* Enable/Disable toggle */}
+                        <button
+                          className={`toggle-switch ${type.enabled ? 'active' : ''}`}
+                          onClick={() => updateFeedbackType(type.id, { enabled: !type.enabled })}
+                          style={{ width: '36px', height: '20px', flexShrink: 0 }}
+                        >
+                          <span className="toggle-slider" style={{ width: '14px', height: '14px' }} />
+                        </button>
+
+                        {/* Delete button */}
+                        <button
+                          onClick={() => removeFeedbackType(type.id)}
+                          style={{
+                            padding: '4px',
+                            background: 'transparent',
+                            border: 'none',
+                            color: 'var(--text-muted)',
+                            cursor: 'pointer',
+                            borderRadius: '4px',
+                          }}
+                          title="Remove this feedback type"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+
+                      {/* Description */}
+                      <input
+                        type="text"
+                        value={type.description}
+                        onChange={(e) => updateFeedbackType(type.id, { description: e.target.value })}
+                        placeholder="Description of what this feedback type checks for"
+                        style={{
+                          width: '100%',
+                          padding: '6px 8px',
+                          background: 'var(--bg-secondary)',
+                          border: '1px solid var(--border-color)',
+                          borderRadius: '4px',
+                          color: 'var(--text-secondary)',
+                          fontSize: '11px',
+                        }}
+                      />
+                    </div>
+                  ))}
+                </div>
+
+                <p className="form-hint" style={{ marginTop: '12px' }}>
+                  Feedback types define the categories of suggestions the AI will provide.
+                  The ID is used in the JSON output, while the label is shown in the UI.
+                </p>
               </div>
             </>
           )}

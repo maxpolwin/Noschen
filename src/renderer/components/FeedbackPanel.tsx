@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Check, X, RefreshCw, ChevronDown, ChevronRight, Sparkles } from 'lucide-react';
-import { FeedbackItem, FEEDBACK_LABELS } from '../../shared/types';
+import { FeedbackItem, DEFAULT_FEEDBACK_LABELS } from '../../shared/types';
 
 interface FeedbackPanelProps {
   feedback: FeedbackItem[];
@@ -45,7 +45,7 @@ function FeedbackPanel({
         {feedback.map((item) => (
           <div key={item.id} className="feedback-item">
             <span className={`feedback-item-badge ${item.type}`}>
-              {FEEDBACK_LABELS[item.type]}
+              {DEFAULT_FEEDBACK_LABELS[item.type as keyof typeof DEFAULT_FEEDBACK_LABELS] || item.type.toUpperCase()}
             </span>
             <div className="feedback-item-content">
               <p className="feedback-item-text">{item.text}</p>

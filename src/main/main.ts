@@ -21,6 +21,19 @@ interface Note {
   excludedSections: string[];
 }
 
+interface FeedbackTypeConfig {
+  id: string;
+  label: string;
+  description: string;
+  color: string;
+  enabled: boolean;
+}
+
+interface PromptConfig {
+  systemPrompt: string;
+  feedbackTypes: FeedbackTypeConfig[];
+}
+
 interface AISettings {
   provider: 'builtin' | 'ollama' | 'mistral';
   ollamaModel: string;
@@ -32,7 +45,60 @@ interface AISettings {
   llmContextSize: number;
   llmMaxTokens: number;
   llmBatchSize: number;
+  promptConfig: PromptConfig;
 }
+
+// Default feedback types
+const DEFAULT_FEEDBACK_TYPES: FeedbackTypeConfig[] = [
+  {
+    id: 'gap',
+    label: 'Gap',
+    description: 'Missing information, perspectives, or analysis that should be added',
+    color: '#60a5fa',
+    enabled: true,
+  },
+  {
+    id: 'mece',
+    label: 'MECE',
+    description: 'Categories that are not mutually exclusive or collectively exhaustive',
+    color: '#c084fc',
+    enabled: true,
+  },
+  {
+    id: 'source',
+    label: 'Source',
+    description: 'Missing citations, references, or empirical evidence',
+    color: '#4ade80',
+    enabled: true,
+  },
+  {
+    id: 'structure',
+    label: 'Structure',
+    description: 'Organization, flow, or formatting improvements needed',
+    color: '#fbbf24',
+    enabled: true,
+  },
+];
+
+// Default system prompt template
+const DEFAULT_SYSTEM_PROMPT = `You are a research assistant helping improve academic notes on "{{topic}}".
+Current section: "{{section}}"
+Other sections in the document: {{otherSections}}
+
+Your task: Analyze the notes and provide SPECIFIC, ACTIONABLE feedback with DETAILED suggestions.
+
+Feedback types:
+{{feedbackTypes}}
+
+IMPORTANT: Your suggestions must contain ACTUAL CONTENT that can be directly inserted into the notes. Do NOT write generic placeholders like "Add more details" or "Include subsection A". Instead, write the actual paragraphs, analysis, or content.
+
+Example of a GOOD response:
+{"feedback":[{"type":"gap","text":"The analysis lacks discussion of economic implications.","suggestion":"The economic impact of this development includes rising costs of supply chain restructuring, estimated at $500B globally. Companies are diversifying manufacturing to Vietnam, India, and Mexico, though this 'friend-shoring' approach increases production costs by 15-20%. The long-term economic equilibrium remains uncertain as nations balance security concerns against efficiency."}]}
+
+Example of a BAD response (do NOT do this):
+{"feedback":[{"type":"structure","text":"Needs better organization.","suggestion":"Add a section header. Include subsection A and B."}]}
+
+Provide 2-3 feedback items. Output ONLY valid JSON:`;
 
 const NOTES_DIR = path.join(app.getPath('userData'), 'notes');
 const SETTINGS_FILE = path.join(app.getPath('userData'), 'settings.json');
@@ -55,6 +121,10 @@ function getDefaultSettings(): AISettings {
     llmContextSize: 2048,      // Context window size
     llmMaxTokens: 1536,        // Max tokens to generate (increased for detailed responses)
     llmBatchSize: 512,         // Batch size for inference
+    promptConfig: {
+      systemPrompt: DEFAULT_SYSTEM_PROMPT,
+      feedbackTypes: DEFAULT_FEEDBACK_TYPES,
+    },
   };
 }
 
@@ -371,50 +441,45 @@ async function callMistralAPI(apiKey: string, systemPrompt: string, userPrompt: 
 let useAdaptiveChunking = false;
 let lastResponseTime = 0;
 
-// AI operations - optimized prompts for different model sizes
-const PROMPTS = {
-  // Improved prompt for small edge models (Qwen 0.5B, Phi3-mini, etc.)
-  small: {
-    system: (ctx: { h1: string; h2: string; allH2s: string[] }) => `You are a research assistant helping improve academic notes on "${ctx.h1}".
-Current section: "${ctx.h2}"
-Other sections in the document: ${ctx.allH2s.slice(0, 5).join(', ')}
+// Generate system prompt from template and settings
+function generateSystemPrompt(
+  template: string,
+  ctx: { h1: string; h2: string; allH2s: string[] },
+  feedbackTypes: FeedbackTypeConfig[]
+): string {
+  // Build feedback types description
+  const enabledTypes = feedbackTypes.filter(t => t.enabled);
+  const feedbackTypesStr = enabledTypes
+    .map(t => `- "${t.id}": ${t.description}`)
+    .join('\n');
 
-Your task: Analyze the notes and provide SPECIFIC, ACTIONABLE feedback with DETAILED suggestions.
+  // Replace template variables
+  return template
+    .replace(/\{\{topic\}\}/g, ctx.h1)
+    .replace(/\{\{section\}\}/g, ctx.h2)
+    .replace(/\{\{otherSections\}\}/g, ctx.allH2s.slice(0, 5).join(', '))
+    .replace(/\{\{feedbackTypes\}\}/g, feedbackTypesStr);
+}
 
-Feedback types:
-- "gap": Missing information, perspectives, or analysis that should be added
-- "mece": Categories or classifications that are not mutually exclusive or collectively exhaustive
-- "source": Missing citations, references, or empirical evidence needed
-- "structure": Organization, flow, or formatting improvements needed
-
-IMPORTANT: Your suggestions must contain ACTUAL CONTENT that can be directly inserted into the notes. Do NOT write generic placeholders like "Add more details" or "Include subsection A". Instead, write the actual paragraphs, analysis, or content.
-
-Example of a GOOD response:
-{"feedback":[{"type":"gap","text":"The analysis lacks discussion of economic implications.","suggestion":"The economic impact of this development includes rising costs of supply chain restructuring, estimated at $500B globally. Companies are diversifying manufacturing to Vietnam, India, and Mexico, though this 'friend-shoring' approach increases production costs by 15-20%. The long-term economic equilibrium remains uncertain as nations balance security concerns against efficiency."}]}
-
-Example of a BAD response (do NOT do this):
-{"feedback":[{"type":"structure","text":"Needs better organization.","suggestion":"Add a section header. Include subsection A and B."}]}
-
-Provide 2-3 feedback items. Output ONLY valid JSON:`,
-    maxContentTokens: 1200,
-  },
-  // Full prompt for larger models (Ollama, Mistral API)
-  large: {
-    system: (ctx: { h1: string; h2: string; allH2s: string[] }) => `You are a research assistant analyzing academic notes. Provide feedback with CONCRETE, INSERTABLE CONTENT.
-
-Research topic: "${ctx.h1}"
-Current section: "${ctx.h2}"
-Existing sections: ${ctx.allH2s.join(', ')}
-
-Analyze the content and provide feedback. Every feedback item MUST include a "suggestion" field with actual insertable text - full paragraphs of analysis, not placeholders.
-
-Categories: MECE (missing categories), GAP (missing perspectives), SOURCE (literature), STRUCTURE (organization)
-
-JSON FORMAT:
-{"feedback":[{"type":"gap","text":"Brief description","suggestion":"2-5 sentences of actual content to insert."}]}`,
-    maxContentTokens: 2000,
-  },
-};
+// Get prompt configuration from settings
+function getPromptConfig(settings: AISettings) {
+  const isSmallModel = settings.provider === 'builtin';
+  return {
+    maxContentTokens: isSmallModel ? 1200 : 2000,
+    generatePrompt: (ctx: { h1: string; h2: string; allH2s: string[] }) => {
+      // Ensure promptConfig exists (for backwards compatibility)
+      const promptConfig = settings.promptConfig || {
+        systemPrompt: DEFAULT_SYSTEM_PROMPT,
+        feedbackTypes: DEFAULT_FEEDBACK_TYPES,
+      };
+      return generateSystemPrompt(
+        promptConfig.systemPrompt,
+        ctx,
+        promptConfig.feedbackTypes
+      );
+    },
+  };
+}
 
 // Extract current section content for focused analysis
 function extractCurrentSection(content: string, currentH2: string): string {
@@ -437,9 +502,9 @@ function extractCurrentSection(content: string, currentH2: string): string {
 ipcMain.handle('ai:analyze', async (_, content: string, context: { h1: string; h2: string; allH2s: string[] }) => {
   const settings = loadSettings();
 
-  // Determine if using small or large model
+  // Get prompt configuration from settings
   const isSmallModel = settings.provider === 'builtin';
-  const promptConfig = isSmallModel ? PROMPTS.small : PROMPTS.large;
+  const promptConfig = getPromptConfig(settings);
 
   // Adaptive chunking for built-in model:
   // - Start with full content
@@ -454,7 +519,7 @@ ipcMain.handle('ai:analyze', async (_, content: string, context: { h1: string; h
     analysisContent = truncateToTokenBudget(content, 1500);
   }
 
-  const systemPrompt = promptConfig.system(context);
+  const systemPrompt = promptConfig.generatePrompt(context);
   const userPrompt = `Analyze:\n\n${analysisContent}`;
 
   try {
@@ -501,7 +566,7 @@ ipcMain.handle('ai:analyze', async (_, content: string, context: { h1: string; h
         // Graceful fallback: if Mistral API key exists, try that
         if (settings.mistralApiKey) {
           console.log('[AI] Falling back to Mistral API...');
-          return await callMistralAPI(settings.mistralApiKey, PROMPTS.large.system(context), `Analyze:\n\n${content}`);
+          return await callMistralAPI(settings.mistralApiKey, systemPrompt, `Analyze:\n\n${content}`);
         }
         return { feedback: [], error: result.error };
       }
@@ -535,11 +600,14 @@ ipcMain.handle('ai:analyze', async (_, content: string, context: { h1: string; h
 
           const parsed = JSON.parse(jsonStr);
 
+          // Get valid types from settings (or use defaults)
+          const feedbackTypes = settings.promptConfig?.feedbackTypes || DEFAULT_FEEDBACK_TYPES;
+          const validTypes = feedbackTypes.filter(t => t.enabled).map(t => t.id);
+
           // Validate and clean up feedback items
           if (parsed.feedback && Array.isArray(parsed.feedback)) {
             parsed.feedback = parsed.feedback.filter((item: { type?: string; text?: string }) => {
               // Filter out invalid types
-              const validTypes = ['mece', 'gap', 'source', 'structure'];
               if (item.type && !validTypes.includes(item.type)) {
                 // Try to extract a valid type from malformed entries
                 if (item.type.includes('|')) {
