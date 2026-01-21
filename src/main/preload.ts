@@ -17,6 +17,9 @@ interface AISettings {
   spellcheckEnabled: boolean;
   spellcheckLanguages: string[];
   chunkingThresholdMs: number;
+  llmContextSize: number;
+  llmMaxTokens: number;
+  llmBatchSize: number;
 }
 
 interface SpellcheckLanguage {

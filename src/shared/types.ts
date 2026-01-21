@@ -15,6 +15,10 @@ export interface AISettings {
   spellcheckEnabled: boolean;
   spellcheckLanguages: string[];
   chunkingThresholdMs: number; // Response time threshold for adaptive chunking (ms)
+  // Built-in LLM configuration
+  llmContextSize: number;   // Context window size (default: 2048)
+  llmMaxTokens: number;     // Max tokens to generate (default: 1024)
+  llmBatchSize: number;     // Batch size for inference (default: 512)
 }
 
 export interface SpellcheckLanguage {

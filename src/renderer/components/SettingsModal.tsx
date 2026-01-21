@@ -16,7 +16,11 @@ function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
     spellcheckEnabled: true,
     spellcheckLanguages: ['en-US'],
     chunkingThresholdMs: 2000,
+    llmContextSize: 2048,
+    llmMaxTokens: 1024,
+    llmBatchSize: 512,
   });
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
   const [availableLanguages, setAvailableLanguages] = useState<SpellcheckLanguage[]>([]);
@@ -35,6 +39,9 @@ function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
       spellcheckEnabled: loaded.spellcheckEnabled ?? true,
       spellcheckLanguages: loaded.spellcheckLanguages ?? ['en-US'],
       chunkingThresholdMs: loaded.chunkingThresholdMs ?? 2000,
+      llmContextSize: loaded.llmContextSize ?? 2048,
+      llmMaxTokens: loaded.llmMaxTokens ?? 1024,
+      llmBatchSize: loaded.llmBatchSize ?? 512,
     });
   };
 
@@ -153,6 +160,94 @@ function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
                       If response takes longer than this, the AI will use only the current section instead of the full note.
                     </p>
                   </div>
+
+                  {/* Advanced Settings Toggle */}
+                  <div className="form-group">
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => setShowAdvanced(!showAdvanced)}
+                      style={{ width: '100%', justifyContent: 'center' }}
+                    >
+                      {showAdvanced ? 'Hide' : 'Show'} Advanced Settings
+                    </button>
+                  </div>
+
+                  {showAdvanced && (
+                    <>
+                      <div className="form-group">
+                        <label className="form-label">
+                          Context Size: {settings.llmContextSize} tokens
+                        </label>
+                        <input
+                          type="range"
+                          className="form-range"
+                          min="512"
+                          max="4096"
+                          step="256"
+                          value={settings.llmContextSize}
+                          onChange={(e) => setSettings({ ...settings, llmContextSize: parseInt(e.target.value) })}
+                        />
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-muted)' }}>
+                          <span>512 (faster)</span>
+                          <span>4096 (more context)</span>
+                        </div>
+                        <p className="form-hint">
+                          Maximum context window size. Higher values allow more input but use more memory.
+                        </p>
+                      </div>
+
+                      <div className="form-group">
+                        <label className="form-label">
+                          Max Output Tokens: {settings.llmMaxTokens}
+                        </label>
+                        <input
+                          type="range"
+                          className="form-range"
+                          min="256"
+                          max="2048"
+                          step="128"
+                          value={settings.llmMaxTokens}
+                          onChange={(e) => setSettings({ ...settings, llmMaxTokens: parseInt(e.target.value) })}
+                        />
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-muted)' }}>
+                          <span>256 (faster)</span>
+                          <span>2048 (longer responses)</span>
+                        </div>
+                        <p className="form-hint">
+                          Maximum tokens to generate. Higher values allow longer AI responses.
+                        </p>
+                      </div>
+
+                      <div className="form-group">
+                        <label className="form-label">
+                          Batch Size: {settings.llmBatchSize}
+                        </label>
+                        <input
+                          type="range"
+                          className="form-range"
+                          min="128"
+                          max="1024"
+                          step="64"
+                          value={settings.llmBatchSize}
+                          onChange={(e) => setSettings({ ...settings, llmBatchSize: parseInt(e.target.value) })}
+                        />
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-muted)' }}>
+                          <span>128 (less memory)</span>
+                          <span>1024 (faster)</span>
+                        </div>
+                        <p className="form-hint">
+                          Inference batch size. Higher values are faster but use more memory.
+                        </p>
+                      </div>
+
+                      <div className="form-group">
+                        <p className="form-hint" style={{ background: 'var(--warning-glow)', padding: '12px', borderRadius: '6px', color: 'var(--warning-color)' }}>
+                          <strong>Warning:</strong> Changing these settings may affect performance and memory usage.
+                          Restart the app after changing these settings.
+                        </p>
+                      </div>
+                    </>
+                  )}
                 </>
               )}
 

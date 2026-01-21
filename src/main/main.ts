@@ -8,6 +8,7 @@ import {
   checkLocalLLMAvailable,
   disposeLocalLLM,
   truncateToTokenBudget,
+  LLMConfig,
   getLocalLLMStatus,
 } from './llm/localLLM';
 
@@ -28,6 +29,9 @@ interface AISettings {
   spellcheckEnabled: boolean;
   spellcheckLanguages: string[];
   chunkingThresholdMs: number;
+  llmContextSize: number;
+  llmMaxTokens: number;
+  llmBatchSize: number;
 }
 
 const NOTES_DIR = path.join(app.getPath('userData'), 'notes');
@@ -48,6 +52,9 @@ function getDefaultSettings(): AISettings {
     spellcheckEnabled: true,
     spellcheckLanguages: ['en-US'],
     chunkingThresholdMs: 2000, // 2 seconds default
+    llmContextSize: 2048,      // Context window size
+    llmMaxTokens: 1024,        // Max tokens to generate
+    llmBatchSize: 512,         // Batch size for inference
   };
 }
 
@@ -458,7 +465,12 @@ ipcMain.handle('ai:analyze', async (_, content: string, context: { h1: string; h
 
       console.log('[AI] Generating response with local model...');
       const startTime = Date.now();
-      const result = await generateLocalResponse(systemPrompt, userPrompt);
+      const llmConfig: LLMConfig = {
+        contextSize: settings.llmContextSize || 2048,
+        maxTokens: settings.llmMaxTokens || 1024,
+        batchSize: settings.llmBatchSize || 512,
+      };
+      const result = await generateLocalResponse(systemPrompt, userPrompt, llmConfig);
       lastResponseTime = Date.now() - startTime;
 
       // Adapt chunking based on response time (use setting, default to 2000ms)

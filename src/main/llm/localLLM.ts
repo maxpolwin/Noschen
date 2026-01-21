@@ -32,12 +32,23 @@ function getOptimalGpuLayers(): number {
   return 0;
 }
 
-// Configuration for small models
-const MODEL_CONFIG = {
-  contextSize: 2048, // Small context for edge models
-  maxTokens: 1024,   // Increased for complete JSON responses
-  temperature: 0.7,
+// LLM configuration interface
+export interface LLMConfig {
+  contextSize: number;
+  maxTokens: number;
+  batchSize: number;
+}
+
+// Default configuration for small models
+const DEFAULT_CONFIG: LLMConfig = {
+  contextSize: 2048,
+  maxTokens: 1024,
   batchSize: 512,
+};
+
+// Static config (not user-configurable)
+const STATIC_CONFIG = {
+  temperature: 0.7,
   gpuLayers: getOptimalGpuLayers(),
 };
 
@@ -152,8 +163,12 @@ export async function initializeLocalLLM(): Promise<{ success: boolean; error?: 
 
 export async function generateLocalResponse(
   systemPrompt: string,
-  userPrompt: string
+  userPrompt: string,
+  config?: Partial<LLMConfig>
 ): Promise<{ response?: string; error?: string }> {
+  // Merge provided config with defaults
+  const llmConfig = { ...DEFAULT_CONFIG, ...config };
+
   // Ensure initialized
   if (!isInitialized || !model) {
     const initResult = await initializeLocalLLM();
@@ -169,9 +184,9 @@ export async function generateLocalResponse(
     const { LlamaChatSession } = llamaModule;
 
     // Create a fresh context for each request to avoid sequence exhaustion
-    console.log('[LocalLLM] Creating fresh context for generation...');
+    console.log(`[LocalLLM] Creating context (size: ${llmConfig.contextSize}, maxTokens: ${llmConfig.maxTokens})...`);
     localContext = await model.createContext({
-      contextSize: MODEL_CONFIG.contextSize,
+      contextSize: llmConfig.contextSize,
     });
 
     // Get a sequence from the fresh context
@@ -187,8 +202,8 @@ export async function generateLocalResponse(
     const startTime = Date.now();
 
     const response = await session.prompt(userPrompt, {
-      maxTokens: MODEL_CONFIG.maxTokens,
-      temperature: MODEL_CONFIG.temperature,
+      maxTokens: llmConfig.maxTokens,
+      temperature: STATIC_CONFIG.temperature,
     });
 
     const duration = Date.now() - startTime;
@@ -244,7 +259,7 @@ export function getLocalLLMStatus(): {
     layers: number;
   };
 } {
-  const gpuEnabled = MODEL_CONFIG.gpuLayers > 0;
+  const gpuEnabled = STATIC_CONFIG.gpuLayers > 0;
   return {
     initialized: isInitialized,
     initializing: isInitializing,
@@ -252,7 +267,7 @@ export function getLocalLLMStatus(): {
     gpuAcceleration: {
       enabled: gpuEnabled,
       type: isAppleSilicon() ? 'Metal (Apple Silicon)' : (gpuEnabled ? 'GPU' : 'CPU'),
-      layers: MODEL_CONFIG.gpuLayers,
+      layers: STATIC_CONFIG.gpuLayers,
     },
   };
 }
