@@ -11,7 +11,6 @@ const dynamicImport = new Function('specifier', 'return import(specifier)') as (
 let llamaModule: any = null;
 let llama: any = null;
 let model: any = null;
-let context: any = null;
 let isInitialized = false;
 let isInitializing = false;
 let initError: string | null = null;
@@ -91,7 +90,7 @@ export async function initializeLocalLLM(): Promise<{ success: boolean; error?: 
   }
 
   // Already initialized
-  if (isInitialized && model && context) {
+  if (isInitialized && model) {
     return { success: true };
   }
 
@@ -130,12 +129,7 @@ export async function initializeLocalLLM(): Promise<{ success: boolean; error?: 
       gpuLayers, // Metal acceleration on Apple Silicon, CPU on others
     });
 
-    // Create context
-    console.log('[LocalLLM] Creating context...');
-    context = await model.createContext({
-      contextSize: MODEL_CONFIG.contextSize,
-    });
-
+    // Note: Context is created fresh for each generation to avoid sequence exhaustion
     isInitialized = true;
     initError = null;
     console.log('[LocalLLM] Initialization complete');
@@ -161,23 +155,29 @@ export async function generateLocalResponse(
   userPrompt: string
 ): Promise<{ response?: string; error?: string }> {
   // Ensure initialized
-  if (!isInitialized || !model || !context) {
+  if (!isInitialized || !model) {
     const initResult = await initializeLocalLLM();
     if (!initResult.success) {
       return { error: initResult.error };
     }
   }
 
+  let localContext: any = null;
   let session: any = null;
-  let contextSequence: any = null;
 
   try {
     const { LlamaChatSession } = llamaModule;
 
-    // Get a sequence from the context
-    contextSequence = context.getSequence();
+    // Create a fresh context for each request to avoid sequence exhaustion
+    console.log('[LocalLLM] Creating fresh context for generation...');
+    localContext = await model.createContext({
+      contextSize: MODEL_CONFIG.contextSize,
+    });
 
-    // Create a fresh session for this request
+    // Get a sequence from the fresh context
+    const contextSequence = localContext.getSequence();
+
+    // Create a session for this request
     session = new LlamaChatSession({
       contextSequence,
       systemPrompt: systemPrompt,
@@ -198,54 +198,28 @@ export async function generateLocalResponse(
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Generation failed';
     console.error('[LocalLLM] Generation error:', errorMessage);
-
-    // If we hit "No sequences left", try to recreate the context
-    if (errorMessage.includes('No sequences left') || errorMessage.includes('context')) {
-      console.log('[LocalLLM] Recreating context due to exhausted sequences...');
-      try {
-        if (context) {
-          await context.dispose();
-        }
-        context = await model.createContext({
-          contextSize: MODEL_CONFIG.contextSize,
-        });
-        console.log('[LocalLLM] Context recreated successfully');
-      } catch (recreateError) {
-        console.error('[LocalLLM] Failed to recreate context:', recreateError);
-        await disposeLocalLLM();
-      }
-    }
-
     return { error: errorMessage };
   } finally {
-    // Always dispose of the session AND the contextSequence to release resources
+    // Dispose of session and context to free resources
     try {
       if (session) {
         await session.dispose?.();
       }
     } catch (e) {
-      // Ignore session disposal errors
+      // Ignore
     }
     try {
-      if (contextSequence) {
-        await contextSequence.dispose?.();
+      if (localContext) {
+        await localContext.dispose?.();
       }
     } catch (e) {
-      // Ignore sequence disposal errors
+      // Ignore
     }
   }
 }
 
 export async function disposeLocalLLM(): Promise<void> {
   console.log('[LocalLLM] Disposing...');
-
-  try {
-    if (context) {
-      await context.dispose();
-    }
-  } catch (e) {
-    console.error('[LocalLLM] Error disposing context:', e);
-  }
 
   try {
     if (model) {
@@ -255,7 +229,6 @@ export async function disposeLocalLLM(): Promise<void> {
     console.error('[LocalLLM] Error disposing model:', e);
   }
 
-  context = null;
   model = null;
   isInitialized = false;
   console.log('[LocalLLM] Disposed');
