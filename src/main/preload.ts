@@ -16,6 +16,7 @@ interface AISettings {
   mistralApiKey: string;
   spellcheckEnabled: boolean;
   spellcheckLanguages: string[];
+  chunkingThresholdMs: number;
 }
 
 interface SpellcheckLanguage {

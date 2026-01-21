@@ -27,6 +27,7 @@ interface AISettings {
   mistralApiKey: string;
   spellcheckEnabled: boolean;
   spellcheckLanguages: string[];
+  chunkingThresholdMs: number;
 }
 
 const NOTES_DIR = path.join(app.getPath('userData'), 'notes');
@@ -46,6 +47,7 @@ function getDefaultSettings(): AISettings {
     mistralApiKey: '',
     spellcheckEnabled: true,
     spellcheckLanguages: ['en-US'],
+    chunkingThresholdMs: 2000, // 2 seconds default
   };
 }
 
@@ -361,7 +363,6 @@ async function callMistralAPI(apiKey: string, systemPrompt: string, userPrompt: 
 // Adaptive chunking state - tracks if we need to chunk based on response time
 let useAdaptiveChunking = false;
 let lastResponseTime = 0;
-const RESPONSE_TIME_THRESHOLD = 2000; // 2 seconds - if slower, start chunking
 
 // AI operations - optimized prompts for different model sizes
 const PROMPTS = {
@@ -455,15 +456,16 @@ ipcMain.handle('ai:analyze', async (_, content: string, context: { h1: string; h
       const result = await generateLocalResponse(systemPrompt, userPrompt);
       lastResponseTime = Date.now() - startTime;
 
-      // Adapt chunking based on response time
-      if (lastResponseTime > RESPONSE_TIME_THRESHOLD) {
+      // Adapt chunking based on response time (use setting, default to 2000ms)
+      const threshold = settings.chunkingThresholdMs || 2000;
+      if (lastResponseTime > threshold) {
         if (!useAdaptiveChunking) {
-          console.log(`[AI] Response took ${lastResponseTime}ms (> ${RESPONSE_TIME_THRESHOLD}ms), enabling chunking for next request`);
+          console.log(`[AI] Response took ${lastResponseTime}ms (> ${threshold}ms), enabling chunking for next request`);
           useAdaptiveChunking = true;
         }
       } else {
         if (useAdaptiveChunking) {
-          console.log(`[AI] Response took ${lastResponseTime}ms (< ${RESPONSE_TIME_THRESHOLD}ms), disabling chunking`);
+          console.log(`[AI] Response took ${lastResponseTime}ms (< ${threshold}ms), disabling chunking`);
           useAdaptiveChunking = false;
         }
       }

@@ -15,6 +15,7 @@ function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
     mistralApiKey: '',
     spellcheckEnabled: true,
     spellcheckLanguages: ['en-US'],
+    chunkingThresholdMs: 2000,
   });
   const [isSaving, setIsSaving] = useState(false);
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
@@ -28,11 +29,12 @@ function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
 
   const loadSettings = async () => {
     const loaded = await window.api.settings.get();
-    // Ensure spellcheck settings exist for older configurations
+    // Ensure settings exist for older configurations
     setSettings({
       ...loaded,
       spellcheckEnabled: loaded.spellcheckEnabled ?? true,
       spellcheckLanguages: loaded.spellcheckLanguages ?? ['en-US'],
+      chunkingThresholdMs: loaded.chunkingThresholdMs ?? 2000,
     });
   };
 
@@ -123,12 +125,35 @@ function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
               </div>
 
               {settings.provider === 'builtin' && (
-                <div className="form-group">
-                  <p className="form-hint" style={{ background: 'var(--bg-tertiary)', padding: '12px', borderRadius: '6px' }}>
-                    The built-in AI uses Qwen2.5-0.5B, a small but capable model that runs entirely on your device.
-                    No internet connection or external setup required.
-                  </p>
-                </div>
+                <>
+                  <div className="form-group">
+                    <p className="form-hint" style={{ background: 'var(--bg-tertiary)', padding: '12px', borderRadius: '6px' }}>
+                      The built-in AI uses Qwen2.5-0.5B, a small but capable model that runs entirely on your device.
+                      No internet connection or external setup required.
+                    </p>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">
+                      Chunking Threshold: {(settings.chunkingThresholdMs / 1000).toFixed(1)}s
+                    </label>
+                    <input
+                      type="range"
+                      className="form-range"
+                      min="500"
+                      max="5000"
+                      step="100"
+                      value={settings.chunkingThresholdMs}
+                      onChange={(e) => setSettings({ ...settings, chunkingThresholdMs: parseInt(e.target.value) })}
+                    />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-muted)' }}>
+                      <span>0.5s (faster, less context)</span>
+                      <span>5s (slower, full context)</span>
+                    </div>
+                    <p className="form-hint">
+                      If response takes longer than this, the AI will use only the current section instead of the full note.
+                    </p>
+                  </div>
+                </>
               )}
 
               {settings.provider === 'ollama' && (

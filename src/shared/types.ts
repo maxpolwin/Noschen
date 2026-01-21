@@ -14,6 +14,7 @@ export interface AISettings {
   mistralApiKey: string;
   spellcheckEnabled: boolean;
   spellcheckLanguages: string[];
+  chunkingThresholdMs: number; // Response time threshold for adaptive chunking (ms)
 }
 
 export interface SpellcheckLanguage {
