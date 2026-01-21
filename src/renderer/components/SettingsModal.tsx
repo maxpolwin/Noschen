@@ -218,25 +218,27 @@ function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
                     </p>
                   </div>
                   <div className="form-group">
-                    <label className="form-label">
-                      Chunking Threshold: {(settings.chunkingThresholdMs / 1000).toFixed(1)}s
-                    </label>
+                    <label className="form-label">Chunking Threshold (ms)</label>
                     <input
-                      type="range"
-                      className="form-range"
+                      type="number"
+                      className="form-input"
                       min="500"
-                      max="5000"
+                      max="10000"
                       step="100"
                       value={settings.chunkingThresholdMs}
-                      onChange={(e) => setSettings({ ...settings, chunkingThresholdMs: parseInt(e.target.value) })}
+                      onChange={(e) => setSettings({ ...settings, chunkingThresholdMs: parseInt(e.target.value) || 3000 })}
+                      style={{ padding: '10px 14px', background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', fontSize: '14px' }}
                     />
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-muted)' }}>
-                      <span>0.5s (faster, less context)</span>
-                      <span>5s (slower, full context)</span>
-                    </div>
                     <p className="form-hint">
-                      If response takes longer than this, the AI will use only the current section instead of the full note.
+                      If AI response takes longer than this threshold, the next request will use only the current section (chunked)
+                      instead of the full note context. This improves response times on slower hardware.
                     </p>
+                    <div style={{ background: 'var(--bg-tertiary)', padding: '10px 12px', borderRadius: '6px', marginTop: '8px', fontSize: '11px', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                      <strong style={{ color: 'var(--text-primary)' }}>Guidance:</strong><br />
+                      • <strong>1000-2000ms:</strong> Aggressive chunking, faster but less context<br />
+                      • <strong>3000ms (default):</strong> Balanced for most hardware<br />
+                      • <strong>5000-10000ms:</strong> Prefer full context, accepts slower responses
+                    </div>
                   </div>
 
                   {/* Advanced Settings Toggle */}
