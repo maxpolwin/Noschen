@@ -368,13 +368,18 @@ let lastResponseTime = 0;
 const PROMPTS = {
   // Compact prompt for small edge models (Qwen 0.5B, Phi3-mini, etc.)
   small: {
-    system: (ctx: { h1: string; h2: string; allH2s: string[] }) => `You analyze research notes and give JSON feedback.
+    system: (ctx: { h1: string; h2: string; allH2s: string[] }) => `Analyze research notes and provide JSON feedback.
 Topic: "${ctx.h1}"
 Section: "${ctx.h2}"
 Other sections: ${ctx.allH2s.slice(0, 5).join(', ')}
 
-Output JSON only:
-{"feedback":[{"type":"gap|mece|source","text":"issue","suggestion":"2-3 sentences to add"}]}`,
+Provide 2-4 feedback items. Each item must have:
+- type: CHOOSE ONE of "mece", "gap", "source", or "structure"
+- text: One sentence describing the issue (be specific and detailed)
+- suggestion: 2-4 sentences of concrete content to add
+
+Respond with ONLY valid JSON, no markdown:
+{"feedback":[{"type":"gap","text":"The section lacks...","suggestion":"Add content about..."}]}`,
     maxContentTokens: 800,
   },
   // Full prompt for larger models (Ollama, Mistral API)
@@ -482,15 +487,54 @@ ipcMain.handle('ai:analyze', async (_, content: string, context: { h1: string; h
 
       // Try to extract JSON from the response
       try {
-        const jsonMatch = result.response?.match(/\{[\s\S]*\}/);
+        let responseText = result.response || '';
+
+        // Strip markdown code blocks if present
+        responseText = responseText.replace(/```json\s*/gi, '').replace(/```\s*/g, '');
+
+        // Find the JSON object
+        const jsonMatch = responseText.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0]);
+          // Clean up any trailing incomplete content
+          let jsonStr = jsonMatch[0];
+
+          // Try to fix incomplete JSON by finding proper closing
+          const openBraces = (jsonStr.match(/\{/g) || []).length;
+          const closeBraces = (jsonStr.match(/\}/g) || []).length;
+
+          if (openBraces > closeBraces) {
+            // JSON is incomplete, try to salvage what we can
+            console.warn('[AI] Incomplete JSON detected, attempting to fix...');
+            // Find the last complete feedback item
+            const lastCompleteItem = jsonStr.lastIndexOf('}]');
+            if (lastCompleteItem > 0) {
+              jsonStr = jsonStr.substring(0, lastCompleteItem + 2) + '}';
+            }
+          }
+
+          const parsed = JSON.parse(jsonStr);
+
+          // Validate and clean up feedback items
+          if (parsed.feedback && Array.isArray(parsed.feedback)) {
+            parsed.feedback = parsed.feedback.filter((item: { type?: string; text?: string }) => {
+              // Filter out invalid types
+              const validTypes = ['mece', 'gap', 'source', 'structure'];
+              if (item.type && !validTypes.includes(item.type)) {
+                // Try to extract a valid type from malformed entries
+                if (item.type.includes('|')) {
+                  item.type = item.type.split('|')[0];
+                }
+              }
+              return item.type && item.text && validTypes.includes(item.type);
+            });
+          }
+
           return ensureSuggestions(parsed);
         }
-        console.warn('[AI] No JSON found in response:', result.response?.slice(0, 200));
+        console.warn('[AI] No JSON found in response:', responseText.slice(0, 200));
         return { feedback: [] };
       } catch (parseError) {
-        console.error('[AI] Failed to parse local LLM response:', result.response?.slice(0, 200));
+        console.error('[AI] Failed to parse local LLM response:', result.response?.slice(0, 300));
         return { feedback: [] };
       }
     } else if (settings.provider === 'ollama') {

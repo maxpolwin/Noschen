@@ -35,7 +35,7 @@ function getOptimalGpuLayers(): number {
 // Configuration for small models
 const MODEL_CONFIG = {
   contextSize: 2048, // Small context for edge models
-  maxTokens: 512,    // Limit output for speed
+  maxTokens: 1024,   // Increased for complete JSON responses
   temperature: 0.7,
   batchSize: 512,
   gpuLayers: getOptimalGpuLayers(),
