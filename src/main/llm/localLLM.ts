@@ -133,7 +133,7 @@ export async function initializeLocalLLM(): Promise<{ success: boolean; error?: 
     }
 
     // Load model with GPU acceleration where available
-    const gpuLayers = MODEL_CONFIG.gpuLayers;
+    const gpuLayers = STATIC_CONFIG.gpuLayers;
     console.log(`[LocalLLM] Loading model with ${gpuLayers} GPU layers (Metal: ${isAppleSilicon()})...`);
     model = await llama.loadModel({
       modelPath,
