@@ -358,6 +358,11 @@ async function callMistralAPI(apiKey: string, systemPrompt: string, userPrompt: 
   }
 }
 
+// Adaptive chunking state - tracks if we need to chunk based on response time
+let useAdaptiveChunking = false;
+let lastResponseTime = 0;
+const RESPONSE_TIME_THRESHOLD = 2000; // 2 seconds - if slower, start chunking
+
 // AI operations - optimized prompts for different model sizes
 const PROMPTS = {
   // Compact prompt for small edge models (Qwen 0.5B, Phi3-mini, etc.)
@@ -414,12 +419,17 @@ ipcMain.handle('ai:analyze', async (_, content: string, context: { h1: string; h
   const isSmallModel = settings.provider === 'builtin';
   const promptConfig = isSmallModel ? PROMPTS.small : PROMPTS.large;
 
-  // For small models, extract only the current section
+  // Adaptive chunking for built-in model:
+  // - Start with full content
+  // - Only chunk if previous response took > 2 seconds
   let analysisContent = content;
-  if (isSmallModel) {
+  if (isSmallModel && useAdaptiveChunking) {
+    console.log('[AI] Using adaptive chunking (previous response was slow)');
     analysisContent = extractCurrentSection(content, context.h2);
-    // Truncate to fit token budget
     analysisContent = truncateToTokenBudget(analysisContent, promptConfig.maxContentTokens);
+  } else if (isSmallModel) {
+    // Use full content but with a reasonable limit for context window
+    analysisContent = truncateToTokenBudget(content, 1500);
   }
 
   const systemPrompt = promptConfig.system(context);
@@ -441,7 +451,22 @@ ipcMain.handle('ai:analyze', async (_, content: string, context: { h1: string; h
       }
 
       console.log('[AI] Generating response with local model...');
+      const startTime = Date.now();
       const result = await generateLocalResponse(systemPrompt, userPrompt);
+      lastResponseTime = Date.now() - startTime;
+
+      // Adapt chunking based on response time
+      if (lastResponseTime > RESPONSE_TIME_THRESHOLD) {
+        if (!useAdaptiveChunking) {
+          console.log(`[AI] Response took ${lastResponseTime}ms (> ${RESPONSE_TIME_THRESHOLD}ms), enabling chunking for next request`);
+          useAdaptiveChunking = true;
+        }
+      } else {
+        if (useAdaptiveChunking) {
+          console.log(`[AI] Response took ${lastResponseTime}ms (< ${RESPONSE_TIME_THRESHOLD}ms), disabling chunking`);
+          useAdaptiveChunking = false;
+        }
+      }
 
       if (result.error) {
         console.error('[AI] Local LLM generation error:', result.error);
