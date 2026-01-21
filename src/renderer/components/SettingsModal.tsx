@@ -15,9 +15,9 @@ function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
     mistralApiKey: '',
     spellcheckEnabled: true,
     spellcheckLanguages: ['en-US'],
-    chunkingThresholdMs: 2000,
+    chunkingThresholdMs: 3000,
     llmContextSize: 2048,
-    llmMaxTokens: 1024,
+    llmMaxTokens: 1536,
     llmBatchSize: 512,
   });
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -38,9 +38,9 @@ function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
       ...loaded,
       spellcheckEnabled: loaded.spellcheckEnabled ?? true,
       spellcheckLanguages: loaded.spellcheckLanguages ?? ['en-US'],
-      chunkingThresholdMs: loaded.chunkingThresholdMs ?? 2000,
+      chunkingThresholdMs: loaded.chunkingThresholdMs ?? 3000,
       llmContextSize: loaded.llmContextSize ?? 2048,
-      llmMaxTokens: loaded.llmMaxTokens ?? 1024,
+      llmMaxTokens: loaded.llmMaxTokens ?? 1536,
       llmBatchSize: loaded.llmBatchSize ?? 512,
     });
   };

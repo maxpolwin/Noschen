@@ -51,9 +51,9 @@ function getDefaultSettings(): AISettings {
     mistralApiKey: '',
     spellcheckEnabled: true,
     spellcheckLanguages: ['en-US'],
-    chunkingThresholdMs: 2000, // 2 seconds default
+    chunkingThresholdMs: 3000, // 3 seconds default (increased for better responses)
     llmContextSize: 2048,      // Context window size
-    llmMaxTokens: 1024,        // Max tokens to generate
+    llmMaxTokens: 1536,        // Max tokens to generate (increased for detailed responses)
     llmBatchSize: 512,         // Batch size for inference
   };
 }
@@ -373,21 +373,30 @@ let lastResponseTime = 0;
 
 // AI operations - optimized prompts for different model sizes
 const PROMPTS = {
-  // Compact prompt for small edge models (Qwen 0.5B, Phi3-mini, etc.)
+  // Improved prompt for small edge models (Qwen 0.5B, Phi3-mini, etc.)
   small: {
-    system: (ctx: { h1: string; h2: string; allH2s: string[] }) => `Analyze research notes and provide JSON feedback.
-Topic: "${ctx.h1}"
-Section: "${ctx.h2}"
-Other sections: ${ctx.allH2s.slice(0, 5).join(', ')}
+    system: (ctx: { h1: string; h2: string; allH2s: string[] }) => `You are a research assistant helping improve academic notes on "${ctx.h1}".
+Current section: "${ctx.h2}"
+Other sections in the document: ${ctx.allH2s.slice(0, 5).join(', ')}
 
-Provide 2-4 feedback items. Each item must have:
-- type: CHOOSE ONE of "mece", "gap", "source", or "structure"
-- text: One sentence describing the issue (be specific and detailed)
-- suggestion: 2-4 sentences of concrete content to add
+Your task: Analyze the notes and provide SPECIFIC, ACTIONABLE feedback with DETAILED suggestions.
 
-Respond with ONLY valid JSON, no markdown:
-{"feedback":[{"type":"gap","text":"The section lacks...","suggestion":"Add content about..."}]}`,
-    maxContentTokens: 800,
+Feedback types:
+- "gap": Missing information, perspectives, or analysis that should be added
+- "mece": Categories or classifications that are not mutually exclusive or collectively exhaustive
+- "source": Missing citations, references, or empirical evidence needed
+- "structure": Organization, flow, or formatting improvements needed
+
+IMPORTANT: Your suggestions must contain ACTUAL CONTENT that can be directly inserted into the notes. Do NOT write generic placeholders like "Add more details" or "Include subsection A". Instead, write the actual paragraphs, analysis, or content.
+
+Example of a GOOD response:
+{"feedback":[{"type":"gap","text":"The analysis lacks discussion of economic implications.","suggestion":"The economic impact of this development includes rising costs of supply chain restructuring, estimated at $500B globally. Companies are diversifying manufacturing to Vietnam, India, and Mexico, though this 'friend-shoring' approach increases production costs by 15-20%. The long-term economic equilibrium remains uncertain as nations balance security concerns against efficiency."}]}
+
+Example of a BAD response (do NOT do this):
+{"feedback":[{"type":"structure","text":"Needs better organization.","suggestion":"Add a section header. Include subsection A and B."}]}
+
+Provide 2-3 feedback items. Output ONLY valid JSON:`,
+    maxContentTokens: 1200,
   },
   // Full prompt for larger models (Ollama, Mistral API)
   large: {
@@ -397,7 +406,7 @@ Research topic: "${ctx.h1}"
 Current section: "${ctx.h2}"
 Existing sections: ${ctx.allH2s.join(', ')}
 
-Analyze the content and provide feedback. Every feedback item MUST include a "suggestion" field with actual insertable text.
+Analyze the content and provide feedback. Every feedback item MUST include a "suggestion" field with actual insertable text - full paragraphs of analysis, not placeholders.
 
 Categories: MECE (missing categories), GAP (missing perspectives), SOURCE (literature), STRUCTURE (organization)
 

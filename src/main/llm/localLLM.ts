@@ -42,7 +42,7 @@ export interface LLMConfig {
 // Default configuration for small models
 const DEFAULT_CONFIG: LLMConfig = {
   contextSize: 2048,
-  maxTokens: 1024,
+  maxTokens: 1536,  // Increased for detailed responses
   batchSize: 512,
 };
 
