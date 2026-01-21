@@ -168,12 +168,18 @@ export async function generateLocalResponse(
     }
   }
 
+  let session: any = null;
+  let contextSequence: any = null;
+
   try {
     const { LlamaChatSession } = llamaModule;
 
+    // Get a sequence from the context
+    contextSequence = context.getSequence();
+
     // Create a fresh session for this request
-    const session = new LlamaChatSession({
-      contextSequence: context.getSequence(),
+    session = new LlamaChatSession({
+      contextSequence,
       systemPrompt: systemPrompt,
     });
 
@@ -193,12 +199,33 @@ export async function generateLocalResponse(
     const errorMessage = error instanceof Error ? error.message : 'Generation failed';
     console.error('[LocalLLM] Generation error:', errorMessage);
 
-    // Reset state on critical errors
-    if (errorMessage.includes('context') || errorMessage.includes('model')) {
-      await disposeLocalLLM();
+    // If we hit "No sequences left", try to recreate the context
+    if (errorMessage.includes('No sequences left') || errorMessage.includes('context')) {
+      console.log('[LocalLLM] Recreating context due to exhausted sequences...');
+      try {
+        if (context) {
+          await context.dispose();
+        }
+        context = await model.createContext({
+          contextSize: MODEL_CONFIG.contextSize,
+        });
+        console.log('[LocalLLM] Context recreated successfully');
+      } catch (recreateError) {
+        console.error('[LocalLLM] Failed to recreate context:', recreateError);
+        await disposeLocalLLM();
+      }
     }
 
     return { error: errorMessage };
+  } finally {
+    // Always dispose of the session to release the sequence
+    if (session) {
+      try {
+        await session.dispose?.();
+      } catch (e) {
+        // Ignore disposal errors
+      }
+    }
   }
 }
 
