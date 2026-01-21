@@ -218,13 +218,20 @@ export async function generateLocalResponse(
 
     return { error: errorMessage };
   } finally {
-    // Always dispose of the session to release the sequence
-    if (session) {
-      try {
+    // Always dispose of the session AND the contextSequence to release resources
+    try {
+      if (session) {
         await session.dispose?.();
-      } catch (e) {
-        // Ignore disposal errors
       }
+    } catch (e) {
+      // Ignore session disposal errors
+    }
+    try {
+      if (contextSequence) {
+        await contextSequence.dispose?.();
+      }
+    } catch (e) {
+      // Ignore sequence disposal errors
     }
   }
 }
