@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
-import { X, Languages, Check, Plus, Trash2, RotateCcw, MessageSquare } from 'lucide-react';
-import { AISettings, SpellcheckLanguage, FeedbackTypeConfig, DEFAULT_FEEDBACK_TYPES, DEFAULT_SYSTEM_PROMPT } from '../../shared/types';
+import { useState, useEffect, useMemo } from 'react';
+import { X, Languages, Check, Plus, Trash2, RotateCcw, MessageSquare, ChevronDown, ChevronRight } from 'lucide-react';
+import { AISettings, SpellcheckLanguage, FeedbackTypeConfig, DEFAULT_FEEDBACK_TYPES, DEFAULT_SYSTEM_PROMPT, FeedbackCategory, FEEDBACK_CATEGORY_LABELS, FeedbackTypeConfigWithCategory } from '../../shared/types';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -112,12 +112,13 @@ function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
 
   const addFeedbackType = () => {
     const newId = `custom_${Date.now()}`;
-    const newType: FeedbackTypeConfig = {
+    const newType: FeedbackTypeConfigWithCategory = {
       id: newId,
       label: 'New Type',
       description: 'Description of what this feedback type checks for',
       color: '#888888',
       enabled: true,
+      category: 'core', // Custom types go to core category
     };
     setSettings({
       ...settings,
@@ -148,6 +149,72 @@ function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
         },
       });
     }
+  };
+
+  // Track collapsed categories
+  const [collapsedCategories, setCollapsedCategories] = useState<Set<FeedbackCategory>>(
+    new Set(['academic', 'strategy', 'cross_cutting', 'meeting']) // Collapse non-core by default
+  );
+
+  const toggleCategory = (category: FeedbackCategory) => {
+    setCollapsedCategories((prev) => {
+      const next = new Set(prev);
+      if (next.has(category)) {
+        next.delete(category);
+      } else {
+        next.add(category);
+      }
+      return next;
+    });
+  };
+
+  // Group feedback types by category
+  const feedbackTypesByCategory = useMemo(() => {
+    const types = settings.promptConfig?.feedbackTypes || DEFAULT_FEEDBACK_TYPES;
+    const grouped: Record<FeedbackCategory, FeedbackTypeConfigWithCategory[]> = {
+      core: [],
+      academic: [],
+      strategy: [],
+      cross_cutting: [],
+      meeting: [],
+    };
+
+    types.forEach((type) => {
+      const typedType = type as FeedbackTypeConfigWithCategory;
+      const category = typedType.category || 'core';
+      if (grouped[category]) {
+        grouped[category].push(typedType);
+      } else {
+        grouped.core.push(typedType);
+      }
+    });
+
+    return grouped;
+  }, [settings.promptConfig?.feedbackTypes]);
+
+  // Enable/disable all types in a category
+  const toggleCategoryEnabled = (category: FeedbackCategory, enabled: boolean) => {
+    const types = settings.promptConfig?.feedbackTypes || DEFAULT_FEEDBACK_TYPES;
+    const updatedTypes = types.map((type) => {
+      const typedType = type as FeedbackTypeConfigWithCategory;
+      if ((typedType.category || 'core') === category) {
+        return { ...typedType, enabled };
+      }
+      return typedType;
+    });
+    setSettings({
+      ...settings,
+      promptConfig: {
+        ...settings.promptConfig,
+        feedbackTypes: updatedTypes,
+      },
+    });
+  };
+
+  // Count enabled types in a category
+  const countEnabled = (category: FeedbackCategory) => {
+    const types = feedbackTypesByCategory[category];
+    return types.filter((t) => t.enabled).length;
   };
 
   return (
@@ -474,132 +541,200 @@ function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
                     style={{ fontSize: '11px', padding: '6px 12px', display: 'flex', alignItems: 'center', gap: '4px' }}
                   >
                     <Plus size={12} />
-                    Add Type
+                    Add Custom
                   </button>
                 </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {(settings.promptConfig?.feedbackTypes || DEFAULT_FEEDBACK_TYPES).map((type) => (
-                    <div
-                      key={type.id}
-                      style={{
-                        background: 'var(--bg-tertiary)',
-                        border: '1px solid var(--border-subtle)',
-                        borderRadius: '8px',
-                        padding: '12px',
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-                        {/* Color picker */}
-                        <input
-                          type="color"
-                          value={type.color}
-                          onChange={(e) => updateFeedbackType(type.id, { color: e.target.value })}
-                          style={{
-                            width: '28px',
-                            height: '28px',
-                            padding: 0,
-                            border: 'none',
-                            borderRadius: '4px',
-                            cursor: 'pointer',
-                          }}
-                        />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {(Object.keys(FEEDBACK_CATEGORY_LABELS) as FeedbackCategory[]).map((category) => {
+                    const types = feedbackTypesByCategory[category];
+                    if (types.length === 0) return null;
+                    const isCollapsed = collapsedCategories.has(category);
+                    const enabledCount = countEnabled(category);
+                    const allEnabled = enabledCount === types.length;
+                    const noneEnabled = enabledCount === 0;
 
-                        {/* ID (editable for custom types) */}
-                        <input
-                          type="text"
-                          value={type.id}
-                          onChange={(e) => {
-                            const newId = e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '');
-                            if (newId) {
-                              const types = settings.promptConfig.feedbackTypes.map((t) =>
-                                t.id === type.id ? { ...t, id: newId } : t
-                              );
-                              setSettings({
-                                ...settings,
-                                promptConfig: { ...settings.promptConfig, feedbackTypes: types },
-                              });
-                            }
-                          }}
-                          placeholder="id"
-                          style={{
-                            width: '80px',
-                            padding: '4px 8px',
-                            background: 'var(--bg-secondary)',
-                            border: '1px solid var(--border-color)',
-                            borderRadius: '4px',
-                            color: 'var(--text-muted)',
-                            fontSize: '11px',
-                            fontFamily: 'monospace',
-                          }}
-                        />
-
-                        {/* Label */}
-                        <input
-                          type="text"
-                          value={type.label}
-                          onChange={(e) => updateFeedbackType(type.id, { label: e.target.value })}
-                          placeholder="Label"
-                          style={{
-                            flex: 1,
-                            padding: '4px 8px',
-                            background: 'var(--bg-secondary)',
-                            border: '1px solid var(--border-color)',
-                            borderRadius: '4px',
-                            color: 'var(--text-primary)',
-                            fontSize: '12px',
-                          }}
-                        />
-
-                        {/* Enable/Disable toggle */}
-                        <button
-                          className={`toggle-switch ${type.enabled ? 'active' : ''}`}
-                          onClick={() => updateFeedbackType(type.id, { enabled: !type.enabled })}
-                          style={{ width: '36px', height: '20px', flexShrink: 0 }}
-                        >
-                          <span className="toggle-slider" style={{ width: '14px', height: '14px' }} />
-                        </button>
-
-                        {/* Delete button */}
-                        <button
-                          onClick={() => removeFeedbackType(type.id)}
-                          style={{
-                            padding: '4px',
-                            background: 'transparent',
-                            border: 'none',
-                            color: 'var(--text-muted)',
-                            cursor: 'pointer',
-                            borderRadius: '4px',
-                          }}
-                          title="Remove this feedback type"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-
-                      {/* Description */}
-                      <input
-                        type="text"
-                        value={type.description}
-                        onChange={(e) => updateFeedbackType(type.id, { description: e.target.value })}
-                        placeholder="Description of what this feedback type checks for"
+                    return (
+                      <div
+                        key={category}
                         style={{
-                          width: '100%',
-                          padding: '6px 8px',
-                          background: 'var(--bg-secondary)',
-                          border: '1px solid var(--border-color)',
-                          borderRadius: '4px',
-                          color: 'var(--text-secondary)',
-                          fontSize: '11px',
+                          background: 'var(--bg-tertiary)',
+                          border: '1px solid var(--border-subtle)',
+                          borderRadius: '10px',
+                          overflow: 'hidden',
                         }}
-                      />
-                    </div>
-                  ))}
+                      >
+                        {/* Category Header */}
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            padding: '10px 12px',
+                            background: 'var(--bg-secondary)',
+                            borderBottom: isCollapsed ? 'none' : '1px solid var(--border-subtle)',
+                            cursor: 'pointer',
+                          }}
+                          onClick={() => toggleCategory(category)}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            {isCollapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
+                            <span style={{ fontWeight: 600, fontSize: '13px', color: 'var(--text-primary)' }}>
+                              {FEEDBACK_CATEGORY_LABELS[category]}
+                            </span>
+                            <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '4px' }}>
+                              ({enabledCount}/{types.length} enabled)
+                            </span>
+                          </div>
+                          <div style={{ display: 'flex', gap: '6px' }} onClick={(e) => e.stopPropagation()}>
+                            <button
+                              className="btn btn-secondary"
+                              onClick={() => toggleCategoryEnabled(category, true)}
+                              disabled={allEnabled}
+                              style={{ fontSize: '10px', padding: '3px 8px', opacity: allEnabled ? 0.5 : 1 }}
+                            >
+                              All On
+                            </button>
+                            <button
+                              className="btn btn-secondary"
+                              onClick={() => toggleCategoryEnabled(category, false)}
+                              disabled={noneEnabled}
+                              style={{ fontSize: '10px', padding: '3px 8px', opacity: noneEnabled ? 0.5 : 1 }}
+                            >
+                              All Off
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Category Types */}
+                        {!isCollapsed && (
+                          <div style={{ padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            {types.map((type) => (
+                              <div
+                                key={type.id}
+                                style={{
+                                  background: 'var(--bg-secondary)',
+                                  border: '1px solid var(--border-color)',
+                                  borderRadius: '6px',
+                                  padding: '10px',
+                                }}
+                              >
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                                  {/* Color picker */}
+                                  <input
+                                    type="color"
+                                    value={type.color}
+                                    onChange={(e) => updateFeedbackType(type.id, { color: e.target.value })}
+                                    style={{
+                                      width: '24px',
+                                      height: '24px',
+                                      padding: 0,
+                                      border: 'none',
+                                      borderRadius: '4px',
+                                      cursor: 'pointer',
+                                    }}
+                                  />
+
+                                  {/* ID (editable) */}
+                                  <input
+                                    type="text"
+                                    value={type.id}
+                                    onChange={(e) => {
+                                      const newId = e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '');
+                                      if (newId) {
+                                        const types = settings.promptConfig.feedbackTypes.map((t) =>
+                                          t.id === type.id ? { ...t, id: newId } : t
+                                        );
+                                        setSettings({
+                                          ...settings,
+                                          promptConfig: { ...settings.promptConfig, feedbackTypes: types },
+                                        });
+                                      }
+                                    }}
+                                    placeholder="id"
+                                    style={{
+                                      width: '100px',
+                                      padding: '4px 6px',
+                                      background: 'var(--bg-tertiary)',
+                                      border: '1px solid var(--border-color)',
+                                      borderRadius: '4px',
+                                      color: 'var(--text-muted)',
+                                      fontSize: '10px',
+                                      fontFamily: 'monospace',
+                                    }}
+                                  />
+
+                                  {/* Label */}
+                                  <input
+                                    type="text"
+                                    value={type.label}
+                                    onChange={(e) => updateFeedbackType(type.id, { label: e.target.value })}
+                                    placeholder="Label"
+                                    style={{
+                                      flex: 1,
+                                      padding: '4px 8px',
+                                      background: 'var(--bg-tertiary)',
+                                      border: '1px solid var(--border-color)',
+                                      borderRadius: '4px',
+                                      color: 'var(--text-primary)',
+                                      fontSize: '12px',
+                                    }}
+                                  />
+
+                                  {/* Enable/Disable toggle */}
+                                  <button
+                                    className={`toggle-switch ${type.enabled ? 'active' : ''}`}
+                                    onClick={() => updateFeedbackType(type.id, { enabled: !type.enabled })}
+                                    style={{ width: '36px', height: '20px', flexShrink: 0 }}
+                                  >
+                                    <span className="toggle-slider" style={{ width: '14px', height: '14px' }} />
+                                  </button>
+
+                                  {/* Delete button */}
+                                  <button
+                                    onClick={() => removeFeedbackType(type.id)}
+                                    style={{
+                                      padding: '4px',
+                                      background: 'transparent',
+                                      border: 'none',
+                                      color: 'var(--text-muted)',
+                                      cursor: 'pointer',
+                                      borderRadius: '4px',
+                                    }}
+                                    title="Remove this feedback type"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </div>
+
+                                {/* Description */}
+                                <input
+                                  type="text"
+                                  value={type.description}
+                                  onChange={(e) => updateFeedbackType(type.id, { description: e.target.value })}
+                                  placeholder="Description of what this feedback type checks for"
+                                  style={{
+                                    width: '100%',
+                                    padding: '5px 8px',
+                                    background: 'var(--bg-tertiary)',
+                                    border: '1px solid var(--border-color)',
+                                    borderRadius: '4px',
+                                    color: 'var(--text-secondary)',
+                                    fontSize: '11px',
+                                  }}
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
 
                 <p className="form-hint" style={{ marginTop: '12px' }}>
                   Feedback types define the categories of suggestions the AI will provide.
-                  The ID is used in the JSON output, while the label is shown in the UI.
+                  Enable the types relevant to your work. The AI will auto-detect content type (research, strategy, meeting notes).
                 </p>
               </div>
             </>
