@@ -88,7 +88,7 @@ function Sidebar({
           ))
         )}
       </div>
-      <div style={{ padding: '8px', borderTop: '1px solid var(--border-color)' }}>
+      <div className="sidebar-footer">
         <button
           className="editor-header-btn"
           style={{ width: '100%', justifyContent: 'center' }}

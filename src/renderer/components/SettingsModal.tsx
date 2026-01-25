@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
-import { X } from 'lucide-react';
-import { AISettings } from '../../shared/types';
+import { useState, useEffect, useMemo } from 'react';
+import { X, Languages, Check, Plus, Trash2, RotateCcw, MessageSquare, ChevronDown, ChevronRight } from 'lucide-react';
+import { AISettings, SpellcheckLanguage, FeedbackTypeConfig, DEFAULT_FEEDBACK_TYPES, DEFAULT_SYSTEM_PROMPT, FeedbackCategory, FEEDBACK_CATEGORY_LABELS, FeedbackTypeConfigWithCategory } from '../../shared/types';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -9,21 +9,68 @@ interface SettingsModalProps {
 
 function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
   const [settings, setSettings] = useState<AISettings>({
-    provider: 'ollama',
+    provider: 'builtin',
     ollamaModel: 'llama3.2',
     ollamaUrl: 'http://localhost:11434',
     mistralApiKey: '',
+    spellcheckEnabled: true,
+    spellcheckLanguages: ['en-US'],
+    chunkingThresholdMs: 3000,
+    llmContextSize: 2048,
+    llmMaxTokens: 1536,
+    llmBatchSize: 512,
+    promptConfig: {
+      systemPrompt: DEFAULT_SYSTEM_PROMPT,
+      feedbackTypes: DEFAULT_FEEDBACK_TYPES,
+    },
   });
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
+  const [availableLanguages, setAvailableLanguages] = useState<SpellcheckLanguage[]>([]);
+  const [activeTab, setActiveTab] = useState<'ai' | 'editor' | 'prompts'>('ai');
 
   useEffect(() => {
     loadSettings();
+    loadAvailableLanguages();
   }, []);
 
   const loadSettings = async () => {
     const loaded = await window.api.settings.get();
-    setSettings(loaded);
+    // Ensure settings exist for older configurations
+    setSettings({
+      ...loaded,
+      spellcheckEnabled: loaded.spellcheckEnabled ?? true,
+      spellcheckLanguages: loaded.spellcheckLanguages ?? ['en-US'],
+      chunkingThresholdMs: loaded.chunkingThresholdMs ?? 3000,
+      llmContextSize: loaded.llmContextSize ?? 2048,
+      llmMaxTokens: loaded.llmMaxTokens ?? 1536,
+      llmBatchSize: loaded.llmBatchSize ?? 512,
+      promptConfig: loaded.promptConfig ?? {
+        systemPrompt: DEFAULT_SYSTEM_PROMPT,
+        feedbackTypes: DEFAULT_FEEDBACK_TYPES,
+      },
+    });
+  };
+
+  const loadAvailableLanguages = async () => {
+    const languages = await window.api.spellcheck.getAvailableLanguages();
+    setAvailableLanguages(languages);
+  };
+
+  const toggleLanguage = (code: string) => {
+    const current = settings.spellcheckLanguages || [];
+    if (current.includes(code)) {
+      setSettings({
+        ...settings,
+        spellcheckLanguages: current.filter((c) => c !== code),
+      });
+    } else {
+      setSettings({
+        ...settings,
+        spellcheckLanguages: [...current, code],
+      });
+    }
   };
 
   const handleSave = async () => {
@@ -40,108 +87,713 @@ function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
     setTestResult(connected ? 'success' : 'error');
   };
 
+  // Prompt configuration helpers
+  const updateSystemPrompt = (prompt: string) => {
+    setSettings({
+      ...settings,
+      promptConfig: {
+        ...settings.promptConfig,
+        systemPrompt: prompt,
+      },
+    });
+  };
+
+  const updateFeedbackType = (id: string, updates: Partial<FeedbackTypeConfig>) => {
+    setSettings({
+      ...settings,
+      promptConfig: {
+        ...settings.promptConfig,
+        feedbackTypes: settings.promptConfig.feedbackTypes.map((t) =>
+          t.id === id ? { ...t, ...updates } : t
+        ),
+      },
+    });
+  };
+
+  const addFeedbackType = () => {
+    const newId = `custom_${Date.now()}`;
+    const newType: FeedbackTypeConfigWithCategory = {
+      id: newId,
+      label: 'New Type',
+      description: 'Description of what this feedback type checks for',
+      color: '#888888',
+      enabled: true,
+      category: 'core', // Custom types go to core category
+    };
+    setSettings({
+      ...settings,
+      promptConfig: {
+        ...settings.promptConfig,
+        feedbackTypes: [...settings.promptConfig.feedbackTypes, newType],
+      },
+    });
+  };
+
+  const removeFeedbackType = (id: string) => {
+    setSettings({
+      ...settings,
+      promptConfig: {
+        ...settings.promptConfig,
+        feedbackTypes: settings.promptConfig.feedbackTypes.filter((t) => t.id !== id),
+      },
+    });
+  };
+
+  const resetToDefaults = () => {
+    if (confirm('Reset all prompts and feedback types to defaults?')) {
+      setSettings({
+        ...settings,
+        promptConfig: {
+          systemPrompt: DEFAULT_SYSTEM_PROMPT,
+          feedbackTypes: DEFAULT_FEEDBACK_TYPES,
+        },
+      });
+    }
+  };
+
+  // Track collapsed categories
+  const [collapsedCategories, setCollapsedCategories] = useState<Set<FeedbackCategory>>(
+    new Set(['academic', 'strategy', 'cross_cutting', 'meeting']) // Collapse non-core by default
+  );
+
+  const toggleCategory = (category: FeedbackCategory) => {
+    setCollapsedCategories((prev) => {
+      const next = new Set(prev);
+      if (next.has(category)) {
+        next.delete(category);
+      } else {
+        next.add(category);
+      }
+      return next;
+    });
+  };
+
+  // Group feedback types by category
+  const feedbackTypesByCategory = useMemo(() => {
+    const types = settings.promptConfig?.feedbackTypes || DEFAULT_FEEDBACK_TYPES;
+    const grouped: Record<FeedbackCategory, FeedbackTypeConfigWithCategory[]> = {
+      core: [],
+      academic: [],
+      strategy: [],
+      cross_cutting: [],
+      meeting: [],
+    };
+
+    types.forEach((type) => {
+      const typedType = type as FeedbackTypeConfigWithCategory;
+      const category = typedType.category || 'core';
+      if (grouped[category]) {
+        grouped[category].push(typedType);
+      } else {
+        grouped.core.push(typedType);
+      }
+    });
+
+    return grouped;
+  }, [settings.promptConfig?.feedbackTypes]);
+
+  // Enable/disable all types in a category
+  const toggleCategoryEnabled = (category: FeedbackCategory, enabled: boolean) => {
+    const types = settings.promptConfig?.feedbackTypes || DEFAULT_FEEDBACK_TYPES;
+    const updatedTypes = types.map((type) => {
+      const typedType = type as FeedbackTypeConfigWithCategory;
+      if ((typedType.category || 'core') === category) {
+        return { ...typedType, enabled };
+      }
+      return typedType;
+    });
+    setSettings({
+      ...settings,
+      promptConfig: {
+        ...settings.promptConfig,
+        feedbackTypes: updatedTypes,
+      },
+    });
+  };
+
+  // Count enabled types in a category
+  const countEnabled = (category: FeedbackCategory) => {
+    const types = feedbackTypesByCategory[category];
+    return types.filter((t) => t.enabled).length;
+  };
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <h2 className="modal-title">AI Settings</h2>
+          <h2 className="modal-title">Settings</h2>
           <button className="modal-close" onClick={onClose}>
             <X size={20} />
           </button>
         </div>
-        <div className="modal-body">
-          <div className="form-group">
-            <label className="form-label">AI Provider</label>
-            <select
-              className="form-select"
-              value={settings.provider}
-              onChange={(e) =>
-                setSettings({ ...settings, provider: e.target.value as 'ollama' | 'mistral' })
-              }
-            >
-              <option value="ollama">Ollama (Local)</option>
-              <option value="mistral">Mistral API (Cloud)</option>
-            </select>
-            <p className="form-hint">
-              {settings.provider === 'ollama'
-                ? 'Uses a local LLM via Ollama for privacy-first AI feedback.'
-                : 'Uses Mistral API for AI feedback. Requires internet connection.'}
-            </p>
-          </div>
 
-          {settings.provider === 'ollama' ? (
+        {/* Tabs */}
+        <div className="modal-tabs">
+          <button
+            className={`modal-tab ${activeTab === 'ai' ? 'active' : ''}`}
+            onClick={() => setActiveTab('ai')}
+          >
+            AI Provider
+          </button>
+          <button
+            className={`modal-tab ${activeTab === 'prompts' ? 'active' : ''}`}
+            onClick={() => setActiveTab('prompts')}
+          >
+            <MessageSquare size={16} />
+            Prompts
+          </button>
+          <button
+            className={`modal-tab ${activeTab === 'editor' ? 'active' : ''}`}
+            onClick={() => setActiveTab('editor')}
+          >
+            <Languages size={16} />
+            Spellcheck
+          </button>
+        </div>
+
+        <div className="modal-body">
+          {activeTab === 'ai' && (
             <>
               <div className="form-group">
-                <label className="form-label">Ollama URL</label>
-                <input
-                  type="text"
-                  className="form-input"
-                  value={settings.ollamaUrl}
-                  onChange={(e) => setSettings({ ...settings, ollamaUrl: e.target.value })}
-                  placeholder="http://localhost:11434"
-                />
-                <p className="form-hint">Default: http://localhost:11434</p>
+                <label className="form-label">AI Provider</label>
+                <select
+                  className="form-select"
+                  value={settings.provider}
+                  onChange={(e) =>
+                    setSettings({ ...settings, provider: e.target.value as 'builtin' | 'ollama' | 'mistral' })
+                  }
+                >
+                  <option value="builtin">Built-in AI (Qwen 0.5B)</option>
+                  <option value="ollama">Ollama (Local)</option>
+                  <option value="mistral">Mistral API (Cloud)</option>
+                </select>
+                <p className="form-hint">
+                  {settings.provider === 'builtin'
+                    ? 'Uses bundled Qwen 0.5B model. Works offline, no setup required.'
+                    : settings.provider === 'ollama'
+                    ? 'Uses a local LLM via Ollama for privacy-first AI feedback.'
+                    : 'Uses Mistral API for AI feedback. Requires internet connection.'}
+                </p>
               </div>
+
+              {settings.provider === 'builtin' && (
+                <>
+                  <div className="form-group">
+                    <p className="form-hint" style={{ background: 'var(--bg-tertiary)', padding: '12px', borderRadius: '6px' }}>
+                      The built-in AI uses Qwen2.5-0.5B, a small but capable model that runs entirely on your device.
+                      No internet connection or external setup required.
+                    </p>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Chunking Threshold (ms)</label>
+                    <input
+                      type="number"
+                      className="form-input"
+                      min="500"
+                      max="10000"
+                      step="100"
+                      value={settings.chunkingThresholdMs}
+                      onChange={(e) => setSettings({ ...settings, chunkingThresholdMs: parseInt(e.target.value) || 3000 })}
+                      style={{ padding: '10px 14px', background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', fontSize: '14px' }}
+                    />
+                    <p className="form-hint">
+                      If AI response takes longer than this threshold, the next request will use only the current section (chunked)
+                      instead of the full note context. This improves response times on slower hardware.
+                    </p>
+                    <div style={{ background: 'var(--bg-tertiary)', padding: '10px 12px', borderRadius: '6px', marginTop: '8px', fontSize: '11px', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                      <strong style={{ color: 'var(--text-primary)' }}>Guidance:</strong><br />
+                      • <strong>1000-2000ms:</strong> Aggressive chunking, faster but less context<br />
+                      • <strong>3000ms (default):</strong> Balanced for most hardware<br />
+                      • <strong>5000-10000ms:</strong> Prefer full context, accepts slower responses
+                    </div>
+                  </div>
+
+                  {/* Advanced Settings Toggle */}
+                  <div className="form-group">
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => setShowAdvanced(!showAdvanced)}
+                      style={{ width: '100%', justifyContent: 'center' }}
+                    >
+                      {showAdvanced ? 'Hide' : 'Show'} Advanced Settings
+                    </button>
+                  </div>
+
+                  {showAdvanced && (
+                    <>
+                      {/* Recommendations Box */}
+                      <div className="form-group">
+                        <div style={{ background: 'var(--bg-tertiary)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
+                          <p style={{ fontSize: '12px', fontWeight: 600, color: 'var(--accent-color)', marginBottom: '8px' }}>
+                            Recommended for M2 MacBook (32GB RAM):
+                          </p>
+                          <div style={{ fontSize: '11px', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                            <div>• <strong>Context Size:</strong> 4096 tokens</div>
+                            <div>• <strong>Max Output:</strong> 2048 tokens</div>
+                            <div>• <strong>Batch Size:</strong> 1024</div>
+                          </div>
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            style={{ marginTop: '10px', fontSize: '11px', padding: '6px 12px' }}
+                            onClick={() => setSettings({
+                              ...settings,
+                              llmContextSize: 4096,
+                              llmMaxTokens: 2048,
+                              llmBatchSize: 1024,
+                            })}
+                          >
+                            Apply Recommended Settings
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="form-group">
+                        <label className="form-label">Context Size (tokens)</label>
+                        <input
+                          type="number"
+                          className="form-input"
+                          min="512"
+                          max="8192"
+                          step="256"
+                          value={settings.llmContextSize}
+                          onChange={(e) => setSettings({ ...settings, llmContextSize: parseInt(e.target.value) || 2048 })}
+                          style={{ padding: '10px 14px', background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', fontSize: '14px' }}
+                        />
+                        <p className="form-hint">
+                          How much input text the model can process. Range: 512-8192. Higher = more context but slower.
+                        </p>
+                      </div>
+
+                      <div className="form-group">
+                        <label className="form-label">Max Output Tokens</label>
+                        <input
+                          type="number"
+                          className="form-input"
+                          min="256"
+                          max="4096"
+                          step="128"
+                          value={settings.llmMaxTokens}
+                          onChange={(e) => setSettings({ ...settings, llmMaxTokens: parseInt(e.target.value) || 1536 })}
+                          style={{ padding: '10px 14px', background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', fontSize: '14px' }}
+                        />
+                        <p className="form-hint">
+                          Maximum length of AI responses. Range: 256-4096. Higher = more detailed suggestions.
+                        </p>
+                      </div>
+
+                      <div className="form-group">
+                        <label className="form-label">Batch Size</label>
+                        <input
+                          type="number"
+                          className="form-input"
+                          min="128"
+                          max="2048"
+                          step="64"
+                          value={settings.llmBatchSize}
+                          onChange={(e) => setSettings({ ...settings, llmBatchSize: parseInt(e.target.value) || 512 })}
+                          style={{ padding: '10px 14px', background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', fontSize: '14px' }}
+                        />
+                        <p className="form-hint">
+                          Inference batch size. Range: 128-2048. Higher = faster but uses more memory.
+                        </p>
+                      </div>
+
+                      <div className="form-group">
+                        <p className="form-hint" style={{ background: 'var(--warning-glow)', padding: '12px', borderRadius: '6px', color: 'var(--warning-color)' }}>
+                          <strong>Note:</strong> Restart the app after changing these settings for them to take effect.
+                        </p>
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
+
+              {settings.provider === 'ollama' && (
+                <>
+                  <div className="form-group">
+                    <label className="form-label">Ollama URL</label>
+                    <input
+                      type="text"
+                      className="form-input"
+                      value={settings.ollamaUrl}
+                      onChange={(e) => setSettings({ ...settings, ollamaUrl: e.target.value })}
+                      placeholder="http://localhost:11434"
+                    />
+                    <p className="form-hint">Default: http://localhost:11434</p>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Model Name</label>
+                    <input
+                      type="text"
+                      className="form-input"
+                      value={settings.ollamaModel}
+                      onChange={(e) => setSettings({ ...settings, ollamaModel: e.target.value })}
+                      placeholder="llama3.2"
+                    />
+                    <p className="form-hint">
+                      Recommended: llama3.2, mistral, or phi3 for M2 MacBooks
+                    </p>
+                  </div>
+                </>
+              )}
+
+              {settings.provider === 'mistral' && (
+                <div className="form-group">
+                  <label className="form-label">Mistral API Key</label>
+                  <input
+                    type="password"
+                    className="form-input"
+                    value={settings.mistralApiKey}
+                    onChange={(e) => setSettings({ ...settings, mistralApiKey: e.target.value })}
+                    placeholder="Enter your Mistral API key"
+                  />
+                  <p className="form-hint">
+                    Get your API key from{' '}
+                    <a
+                      href="https://console.mistral.ai/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ color: 'var(--accent-color)' }}
+                    >
+                      console.mistral.ai
+                    </a>
+                  </p>
+                </div>
+              )}
+
               <div className="form-group">
-                <label className="form-label">Model Name</label>
-                <input
-                  type="text"
-                  className="form-input"
-                  value={settings.ollamaModel}
-                  onChange={(e) => setSettings({ ...settings, ollamaModel: e.target.value })}
-                  placeholder="llama3.2"
+                <button
+                  className="btn btn-secondary"
+                  onClick={handleTest}
+                  style={{ width: '100%' }}
+                >
+                  Test Connection
+                </button>
+                {testResult && (
+                  <p
+                    className="form-hint"
+                    style={{
+                      color: testResult === 'success' ? 'var(--success-color)' : 'var(--error-color)',
+                      marginTop: '8px',
+                    }}
+                  >
+                    {testResult === 'success'
+                      ? 'Connection successful!'
+                      : 'Connection failed. Please check your settings.'}
+                  </p>
+                )}
+              </div>
+            </>
+          )}
+
+          {activeTab === 'prompts' && (
+            <>
+              {/* Reset to Defaults */}
+              <div className="form-group">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                  <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                    Customize the AI prompts and feedback types
+                  </span>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={resetToDefaults}
+                    style={{ fontSize: '11px', padding: '6px 12px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                  >
+                    <RotateCcw size={12} />
+                    Reset Defaults
+                  </button>
+                </div>
+              </div>
+
+              {/* System Prompt */}
+              <div className="form-group">
+                <label className="form-label">System Prompt</label>
+                <textarea
+                  value={settings.promptConfig?.systemPrompt || DEFAULT_SYSTEM_PROMPT}
+                  onChange={(e) => updateSystemPrompt(e.target.value)}
+                  style={{
+                    width: '100%',
+                    minHeight: '200px',
+                    padding: '12px',
+                    background: 'var(--bg-tertiary)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '8px',
+                    color: 'var(--text-primary)',
+                    fontSize: '12px',
+                    fontFamily: 'monospace',
+                    resize: 'vertical',
+                    lineHeight: 1.5,
+                  }}
                 />
                 <p className="form-hint">
-                  Recommended: llama3.2, mistral, or phi3 for M2 MacBooks
+                  Available variables: {'{{topic}}'}, {'{{section}}'}, {'{{otherSections}}'}, {'{{feedbackTypes}}'}
+                </p>
+              </div>
+
+              {/* Feedback Types */}
+              <div className="form-group">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                  <label className="form-label" style={{ marginBottom: 0 }}>Feedback Types</label>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={addFeedbackType}
+                    style={{ fontSize: '11px', padding: '6px 12px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                  >
+                    <Plus size={12} />
+                    Add Custom
+                  </button>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {(Object.keys(FEEDBACK_CATEGORY_LABELS) as FeedbackCategory[]).map((category) => {
+                    const types = feedbackTypesByCategory[category];
+                    if (types.length === 0) return null;
+                    const isCollapsed = collapsedCategories.has(category);
+                    const enabledCount = countEnabled(category);
+                    const allEnabled = enabledCount === types.length;
+                    const noneEnabled = enabledCount === 0;
+
+                    return (
+                      <div
+                        key={category}
+                        style={{
+                          background: 'var(--bg-tertiary)',
+                          border: '1px solid var(--border-subtle)',
+                          borderRadius: '10px',
+                          overflow: 'hidden',
+                        }}
+                      >
+                        {/* Category Header */}
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            padding: '10px 12px',
+                            background: 'var(--bg-secondary)',
+                            borderBottom: isCollapsed ? 'none' : '1px solid var(--border-subtle)',
+                            cursor: 'pointer',
+                          }}
+                          onClick={() => toggleCategory(category)}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            {isCollapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
+                            <span style={{ fontWeight: 600, fontSize: '13px', color: 'var(--text-primary)' }}>
+                              {FEEDBACK_CATEGORY_LABELS[category]}
+                            </span>
+                            <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '4px' }}>
+                              ({enabledCount}/{types.length} enabled)
+                            </span>
+                          </div>
+                          <div style={{ display: 'flex', gap: '6px' }} onClick={(e) => e.stopPropagation()}>
+                            <button
+                              className="btn btn-secondary"
+                              onClick={() => toggleCategoryEnabled(category, true)}
+                              disabled={allEnabled}
+                              style={{ fontSize: '10px', padding: '3px 8px', opacity: allEnabled ? 0.5 : 1 }}
+                            >
+                              All On
+                            </button>
+                            <button
+                              className="btn btn-secondary"
+                              onClick={() => toggleCategoryEnabled(category, false)}
+                              disabled={noneEnabled}
+                              style={{ fontSize: '10px', padding: '3px 8px', opacity: noneEnabled ? 0.5 : 1 }}
+                            >
+                              All Off
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Category Types */}
+                        {!isCollapsed && (
+                          <div style={{ padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            {types.map((type) => (
+                              <div
+                                key={type.id}
+                                style={{
+                                  background: 'var(--bg-secondary)',
+                                  border: '1px solid var(--border-color)',
+                                  borderRadius: '6px',
+                                  padding: '10px',
+                                }}
+                              >
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                                  {/* Color picker */}
+                                  <input
+                                    type="color"
+                                    value={type.color}
+                                    onChange={(e) => updateFeedbackType(type.id, { color: e.target.value })}
+                                    style={{
+                                      width: '24px',
+                                      height: '24px',
+                                      padding: 0,
+                                      border: 'none',
+                                      borderRadius: '4px',
+                                      cursor: 'pointer',
+                                    }}
+                                  />
+
+                                  {/* ID (editable) */}
+                                  <input
+                                    type="text"
+                                    value={type.id}
+                                    onChange={(e) => {
+                                      const newId = e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '');
+                                      if (newId) {
+                                        const types = settings.promptConfig.feedbackTypes.map((t) =>
+                                          t.id === type.id ? { ...t, id: newId } : t
+                                        );
+                                        setSettings({
+                                          ...settings,
+                                          promptConfig: { ...settings.promptConfig, feedbackTypes: types },
+                                        });
+                                      }
+                                    }}
+                                    placeholder="id"
+                                    style={{
+                                      width: '100px',
+                                      padding: '4px 6px',
+                                      background: 'var(--bg-tertiary)',
+                                      border: '1px solid var(--border-color)',
+                                      borderRadius: '4px',
+                                      color: 'var(--text-muted)',
+                                      fontSize: '10px',
+                                      fontFamily: 'monospace',
+                                    }}
+                                  />
+
+                                  {/* Label */}
+                                  <input
+                                    type="text"
+                                    value={type.label}
+                                    onChange={(e) => updateFeedbackType(type.id, { label: e.target.value })}
+                                    placeholder="Label"
+                                    style={{
+                                      flex: 1,
+                                      padding: '4px 8px',
+                                      background: 'var(--bg-tertiary)',
+                                      border: '1px solid var(--border-color)',
+                                      borderRadius: '4px',
+                                      color: 'var(--text-primary)',
+                                      fontSize: '12px',
+                                    }}
+                                  />
+
+                                  {/* Enable/Disable toggle */}
+                                  <button
+                                    className={`toggle-switch ${type.enabled ? 'active' : ''}`}
+                                    onClick={() => updateFeedbackType(type.id, { enabled: !type.enabled })}
+                                    style={{ width: '36px', height: '20px', flexShrink: 0 }}
+                                  >
+                                    <span className="toggle-slider" style={{ width: '14px', height: '14px' }} />
+                                  </button>
+
+                                  {/* Delete button */}
+                                  <button
+                                    onClick={() => removeFeedbackType(type.id)}
+                                    style={{
+                                      padding: '4px',
+                                      background: 'transparent',
+                                      border: 'none',
+                                      color: 'var(--text-muted)',
+                                      cursor: 'pointer',
+                                      borderRadius: '4px',
+                                    }}
+                                    title="Remove this feedback type"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </div>
+
+                                {/* Description */}
+                                <input
+                                  type="text"
+                                  value={type.description}
+                                  onChange={(e) => updateFeedbackType(type.id, { description: e.target.value })}
+                                  placeholder="Description of what this feedback type checks for"
+                                  style={{
+                                    width: '100%',
+                                    padding: '5px 8px',
+                                    background: 'var(--bg-tertiary)',
+                                    border: '1px solid var(--border-color)',
+                                    borderRadius: '4px',
+                                    color: 'var(--text-secondary)',
+                                    fontSize: '11px',
+                                  }}
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <p className="form-hint" style={{ marginTop: '12px' }}>
+                  Feedback types define the categories of suggestions the AI will provide.
+                  Enable the types relevant to your work. The AI will auto-detect content type (research, strategy, meeting notes).
                 </p>
               </div>
             </>
-          ) : (
-            <div className="form-group">
-              <label className="form-label">Mistral API Key</label>
-              <input
-                type="password"
-                className="form-input"
-                value={settings.mistralApiKey}
-                onChange={(e) => setSettings({ ...settings, mistralApiKey: e.target.value })}
-                placeholder="Enter your Mistral API key"
-              />
-              <p className="form-hint">
-                Get your API key from{' '}
-                <a
-                  href="https://console.mistral.ai/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{ color: 'var(--accent-color)' }}
-                >
-                  console.mistral.ai
-                </a>
-              </p>
-            </div>
           )}
 
-          <div className="form-group">
-            <button
-              className="btn btn-secondary"
-              onClick={handleTest}
-              style={{ width: '100%' }}
-            >
-              Test Connection
-            </button>
-            {testResult && (
-              <p
-                className="form-hint"
-                style={{
-                  color: testResult === 'success' ? 'var(--success-color)' : 'var(--error-color)',
-                  marginTop: '8px',
-                }}
-              >
-                {testResult === 'success'
-                  ? 'Connection successful!'
-                  : 'Connection failed. Please check your settings.'}
-              </p>
-            )}
-          </div>
+          {activeTab === 'editor' && (
+            <>
+              <div className="form-group">
+                <label className="form-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span>Enable Spellcheck</span>
+                  <button
+                    className={`toggle-switch ${settings.spellcheckEnabled ? 'active' : ''}`}
+                    onClick={() => setSettings({ ...settings, spellcheckEnabled: !settings.spellcheckEnabled })}
+                  >
+                    <span className="toggle-slider" />
+                  </button>
+                </label>
+                <p className="form-hint">
+                  Underlines misspelled words. Right-click to see suggestions.
+                </p>
+              </div>
+
+              {settings.spellcheckEnabled && (
+                <div className="form-group">
+                  <label className="form-label">Languages</label>
+                  <p className="form-hint" style={{ marginBottom: '12px' }}>
+                    Select one or more languages for spellcheck. Multiple languages can be active simultaneously.
+                  </p>
+                  <div className="language-grid">
+                    {availableLanguages.map((lang) => {
+                      const isSelected = (settings.spellcheckLanguages || []).includes(lang.code);
+                      return (
+                        <button
+                          key={lang.code}
+                          className={`language-chip ${isSelected ? 'selected' : ''}`}
+                          onClick={() => toggleLanguage(lang.code)}
+                        >
+                          {isSelected && <Check size={14} />}
+                          {lang.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {(settings.spellcheckLanguages || []).length === 0 && (
+                    <p className="form-hint" style={{ color: 'var(--warning-color)', marginTop: '8px' }}>
+                      Please select at least one language for spellcheck.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              <div className="form-group" style={{ marginTop: '16px' }}>
+                <p className="form-hint" style={{ background: 'var(--bg-tertiary)', padding: '12px', borderRadius: '6px' }}>
+                  <strong>Note:</strong> Changes to spellcheck settings require restarting the app to take full effect.
+                  Dictionaries are downloaded automatically when needed.
+                </p>
+              </div>
+            </>
+          )}
         </div>
         <div className="modal-footer">
           <button className="btn btn-secondary" onClick={onClose}>

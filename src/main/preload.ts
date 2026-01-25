@@ -9,11 +9,51 @@ interface Note {
   excludedSections: string[];
 }
 
+interface FeedbackTypeConfig {
+  id: string;
+  label: string;
+  description: string;
+  color: string;
+  enabled: boolean;
+}
+
+interface PromptConfig {
+  systemPrompt: string;
+  feedbackTypes: FeedbackTypeConfig[];
+}
+
 interface AISettings {
-  provider: 'ollama' | 'mistral';
+  provider: 'builtin' | 'ollama' | 'mistral';
   ollamaModel: string;
   ollamaUrl: string;
   mistralApiKey: string;
+  spellcheckEnabled: boolean;
+  spellcheckLanguages: string[];
+  chunkingThresholdMs: number;
+  llmContextSize: number;
+  llmMaxTokens: number;
+  llmBatchSize: number;
+  promptConfig: PromptConfig;
+}
+
+interface SpellcheckLanguage {
+  code: string;
+  name: string;
+}
+
+interface LLMStatus {
+  provider: string;
+  localLLM: {
+    initialized: boolean;
+    initializing: boolean;
+    error: string | null;
+    gpuAcceleration: {
+      enabled: boolean;
+      type: string;
+      layers: number;
+    };
+  };
+  modelPath: string | null;
 }
 
 interface AIContext {
@@ -23,8 +63,9 @@ interface AIContext {
 }
 
 interface FeedbackItem {
-  type: 'mece' | 'gap' | 'source' | 'structure';
+  type: string;  // Accepts custom types
   text: string;
+  suggestion?: string;
   relevantText?: string;
 }
 
@@ -50,6 +91,13 @@ const api = {
     analyze: (content: string, context: AIContext): Promise<AIResponse> =>
       ipcRenderer.invoke('ai:analyze', content, context),
     checkConnection: (): Promise<boolean> => ipcRenderer.invoke('ai:checkConnection'),
+    getStatus: (): Promise<LLMStatus> => ipcRenderer.invoke('ai:getStatus'),
+  },
+  spellcheck: {
+    getAvailableLanguages: (): Promise<SpellcheckLanguage[]> =>
+      ipcRenderer.invoke('spellcheck:getAvailableLanguages'),
+    getCurrentLanguages: (): Promise<string[]> =>
+      ipcRenderer.invoke('spellcheck:getCurrentLanguages'),
   },
 };
 

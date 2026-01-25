@@ -1,7 +1,16 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, session, Menu, MenuItem } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
+import {
+  initializeLocalLLM,
+  generateLocalResponse,
+  checkLocalLLMAvailable,
+  disposeLocalLLM,
+  truncateToTokenBudget,
+  LLMConfig,
+  getLocalLLMStatus,
+} from './llm/localLLM';
 
 interface Note {
   id: string;
@@ -12,12 +21,84 @@ interface Note {
   excludedSections: string[];
 }
 
+interface FeedbackTypeConfig {
+  id: string;
+  label: string;
+  description: string;
+  color: string;
+  enabled: boolean;
+}
+
+interface PromptConfig {
+  systemPrompt: string;
+  feedbackTypes: FeedbackTypeConfig[];
+}
+
 interface AISettings {
-  provider: 'ollama' | 'mistral';
+  provider: 'builtin' | 'ollama' | 'mistral';
   ollamaModel: string;
   ollamaUrl: string;
   mistralApiKey: string;
+  spellcheckEnabled: boolean;
+  spellcheckLanguages: string[];
+  chunkingThresholdMs: number;
+  llmContextSize: number;
+  llmMaxTokens: number;
+  llmBatchSize: number;
+  promptConfig: PromptConfig;
 }
+
+// Default feedback types
+const DEFAULT_FEEDBACK_TYPES: FeedbackTypeConfig[] = [
+  {
+    id: 'gap',
+    label: 'Gap',
+    description: 'Missing information, perspectives, or analysis that should be added',
+    color: '#60a5fa',
+    enabled: true,
+  },
+  {
+    id: 'mece',
+    label: 'MECE',
+    description: 'Categories that are not mutually exclusive or collectively exhaustive',
+    color: '#c084fc',
+    enabled: true,
+  },
+  {
+    id: 'source',
+    label: 'Source',
+    description: 'Missing citations, references, or empirical evidence',
+    color: '#4ade80',
+    enabled: true,
+  },
+  {
+    id: 'structure',
+    label: 'Structure',
+    description: 'Organization, flow, or formatting improvements needed',
+    color: '#fbbf24',
+    enabled: true,
+  },
+];
+
+// Default system prompt template
+const DEFAULT_SYSTEM_PROMPT = `You are a research assistant helping improve academic notes on "{{topic}}".
+Current section: "{{section}}"
+Other sections in the document: {{otherSections}}
+
+Your task: Analyze the notes and provide SPECIFIC, ACTIONABLE feedback with DETAILED suggestions.
+
+Feedback types:
+{{feedbackTypes}}
+
+IMPORTANT: Your suggestions must contain ACTUAL CONTENT that can be directly inserted into the notes. Do NOT write generic placeholders like "Add more details" or "Include subsection A". Instead, write the actual paragraphs, analysis, or content.
+
+Example of a GOOD response:
+{"feedback":[{"type":"gap","text":"The analysis lacks discussion of economic implications.","suggestion":"The economic impact of this development includes rising costs of supply chain restructuring, estimated at $500B globally. Companies are diversifying manufacturing to Vietnam, India, and Mexico, though this 'friend-shoring' approach increases production costs by 15-20%. The long-term economic equilibrium remains uncertain as nations balance security concerns against efficiency."}]}
+
+Example of a BAD response (do NOT do this):
+{"feedback":[{"type":"structure","text":"Needs better organization.","suggestion":"Add a section header. Include subsection A and B."}]}
+
+Provide 2-3 feedback items. Output ONLY valid JSON:`;
 
 const NOTES_DIR = path.join(app.getPath('userData'), 'notes');
 const SETTINGS_FILE = path.join(app.getPath('userData'), 'settings.json');
@@ -30,10 +111,20 @@ function ensureDirectories() {
 
 function getDefaultSettings(): AISettings {
   return {
-    provider: 'ollama',
+    provider: 'builtin',
     ollamaModel: 'llama3.2',
     ollamaUrl: 'http://localhost:11434',
     mistralApiKey: '',
+    spellcheckEnabled: true,
+    spellcheckLanguages: ['en-US'],
+    chunkingThresholdMs: 3000, // 3 seconds default (increased for better responses)
+    llmContextSize: 2048,      // Context window size
+    llmMaxTokens: 1536,        // Max tokens to generate (increased for detailed responses)
+    llmBatchSize: 512,         // Batch size for inference
+    promptConfig: {
+      systemPrompt: DEFAULT_SYSTEM_PROMPT,
+      feedbackTypes: DEFAULT_FEEDBACK_TYPES,
+    },
   };
 }
 
@@ -54,7 +145,11 @@ function saveSettings(settings: AISettings) {
 
 let mainWindow: BrowserWindow | null = null;
 
-function createWindow() {
+const isDev = !app.isPackaged;
+
+async function createWindow() {
+  const settings = loadSettings();
+
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -66,24 +161,89 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      spellcheck: settings.spellcheckEnabled,
     },
   });
 
-  if (process.env.NODE_ENV === 'development') {
-    mainWindow.loadURL('http://localhost:5173');
+  // Configure spellchecker languages
+  if (settings.spellcheckEnabled && settings.spellcheckLanguages.length > 0) {
+    session.defaultSession.setSpellCheckerLanguages(settings.spellcheckLanguages);
+  }
+
+  // Set up context menu for spelling corrections
+  mainWindow.webContents.on('context-menu', (event, params) => {
+    const menu = new Menu();
+
+    // Add spelling suggestions if there are any
+    if (params.misspelledWord) {
+      for (const suggestion of params.dictionarySuggestions.slice(0, 5)) {
+        menu.append(new MenuItem({
+          label: suggestion,
+          click: () => mainWindow?.webContents.replaceMisspelling(suggestion),
+        }));
+      }
+
+      if (params.dictionarySuggestions.length > 0) {
+        menu.append(new MenuItem({ type: 'separator' }));
+      }
+
+      // Add to dictionary option
+      menu.append(new MenuItem({
+        label: `Add "${params.misspelledWord}" to dictionary`,
+        click: () => mainWindow?.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord),
+      }));
+
+      menu.append(new MenuItem({ type: 'separator' }));
+    }
+
+    // Standard edit menu items
+    if (params.isEditable) {
+      menu.append(new MenuItem({ role: 'cut', label: 'Cut' }));
+      menu.append(new MenuItem({ role: 'copy', label: 'Copy' }));
+      menu.append(new MenuItem({ role: 'paste', label: 'Paste' }));
+      menu.append(new MenuItem({ role: 'selectAll', label: 'Select All' }));
+    } else if (params.selectionText) {
+      menu.append(new MenuItem({ role: 'copy', label: 'Copy' }));
+    }
+
+    if (menu.items.length > 0) {
+      menu.popup();
+    }
+  });
+
+  if (isDev) {
+    // Try common dev server ports
+    const ports = [5173, 5174, 5175, 3000];
+    let loaded = false;
+
+    for (const port of ports) {
+      try {
+        await mainWindow.loadURL(`http://localhost:${port}`);
+        console.log(`Loaded dev server on port ${port}`);
+        loaded = true;
+        break;
+      } catch {
+        console.log(`Port ${port} not available, trying next...`);
+      }
+    }
+
+    if (!loaded) {
+      console.error('Could not connect to dev server');
+    }
+
     mainWindow.webContents.openDevTools();
   } else {
     mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   ensureDirectories();
-  createWindow();
+  await createWindow();
 
-  app.on('activate', () => {
+  app.on('activate', async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
+      await createWindow();
     }
   });
 });
@@ -188,42 +348,285 @@ ipcMain.handle('settings:get', async () => {
 
 ipcMain.handle('settings:save', async (_, settings: AISettings) => {
   saveSettings(settings);
+
+  // Apply spellcheck settings at runtime
+  if (mainWindow) {
+    if (settings.spellcheckEnabled && settings.spellcheckLanguages.length > 0) {
+      session.defaultSession.setSpellCheckerLanguages(settings.spellcheckLanguages);
+    }
+  }
+
   return settings;
 });
 
-// AI operations
+// Spellcheck operations
+ipcMain.handle('spellcheck:getAvailableLanguages', async () => {
+  // Return commonly available spellcheck languages
+  // Chromium downloads dictionaries on demand, these are the most common ones
+  return [
+    { code: 'en-US', name: 'English (US)' },
+    { code: 'en-GB', name: 'English (UK)' },
+    { code: 'en-AU', name: 'English (Australia)' },
+    { code: 'de-DE', name: 'German (Germany)' },
+    { code: 'de-AT', name: 'German (Austria)' },
+    { code: 'de-CH', name: 'German (Switzerland)' },
+    { code: 'fr-FR', name: 'French (France)' },
+    { code: 'es-ES', name: 'Spanish (Spain)' },
+    { code: 'es-MX', name: 'Spanish (Mexico)' },
+    { code: 'it-IT', name: 'Italian' },
+    { code: 'pt-BR', name: 'Portuguese (Brazil)' },
+    { code: 'pt-PT', name: 'Portuguese (Portugal)' },
+    { code: 'nl-NL', name: 'Dutch' },
+    { code: 'pl-PL', name: 'Polish' },
+    { code: 'ru-RU', name: 'Russian' },
+    { code: 'uk-UA', name: 'Ukrainian' },
+    { code: 'sv-SE', name: 'Swedish' },
+    { code: 'da-DK', name: 'Danish' },
+    { code: 'nb-NO', name: 'Norwegian' },
+    { code: 'fi-FI', name: 'Finnish' },
+    { code: 'cs-CZ', name: 'Czech' },
+    { code: 'hu-HU', name: 'Hungarian' },
+    { code: 'ro-RO', name: 'Romanian' },
+    { code: 'bg-BG', name: 'Bulgarian' },
+    { code: 'el-GR', name: 'Greek' },
+    { code: 'tr-TR', name: 'Turkish' },
+    { code: 'vi-VN', name: 'Vietnamese' },
+    { code: 'th-TH', name: 'Thai' },
+    { code: 'id-ID', name: 'Indonesian' },
+    { code: 'ms-MY', name: 'Malay' },
+    { code: 'ko-KR', name: 'Korean' },
+    { code: 'ja-JP', name: 'Japanese' },
+    { code: 'zh-CN', name: 'Chinese (Simplified)' },
+    { code: 'zh-TW', name: 'Chinese (Traditional)' },
+  ];
+});
+
+ipcMain.handle('spellcheck:getCurrentLanguages', async () => {
+  return session.defaultSession.getSpellCheckerLanguages();
+});
+
+// Helper function for Mistral API calls (used as fallback)
+async function callMistralAPI(apiKey: string, systemPrompt: string, userPrompt: string) {
+  try {
+    const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'mistral-small-latest',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        response_format: { type: 'json_object' },
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error('Mistral request failed');
+    }
+
+    const data = await response.json() as { choices: { message: { content: string } }[] };
+    const parsed = JSON.parse(data.choices[0].message.content);
+    return ensureSuggestions(parsed);
+  } catch (error) {
+    console.error('[AI] Mistral API fallback failed:', error);
+    return { feedback: [], error: 'Mistral API fallback failed' };
+  }
+}
+
+// Adaptive chunking state - tracks if we need to chunk based on response time
+let useAdaptiveChunking = false;
+let lastResponseTime = 0;
+
+// Generate system prompt from template and settings
+function generateSystemPrompt(
+  template: string,
+  ctx: { h1: string; h2: string; allH2s: string[] },
+  feedbackTypes: FeedbackTypeConfig[]
+): string {
+  // Build feedback types description
+  const enabledTypes = feedbackTypes.filter(t => t.enabled);
+  const feedbackTypesStr = enabledTypes
+    .map(t => `- "${t.id}": ${t.description}`)
+    .join('\n');
+
+  // Replace template variables
+  return template
+    .replace(/\{\{topic\}\}/g, ctx.h1)
+    .replace(/\{\{section\}\}/g, ctx.h2)
+    .replace(/\{\{otherSections\}\}/g, ctx.allH2s.slice(0, 5).join(', '))
+    .replace(/\{\{feedbackTypes\}\}/g, feedbackTypesStr);
+}
+
+// Get prompt configuration from settings
+function getPromptConfig(settings: AISettings) {
+  const isSmallModel = settings.provider === 'builtin';
+  return {
+    maxContentTokens: isSmallModel ? 1200 : 2000,
+    generatePrompt: (ctx: { h1: string; h2: string; allH2s: string[] }) => {
+      // Ensure promptConfig exists (for backwards compatibility)
+      const promptConfig = settings.promptConfig || {
+        systemPrompt: DEFAULT_SYSTEM_PROMPT,
+        feedbackTypes: DEFAULT_FEEDBACK_TYPES,
+      };
+      return generateSystemPrompt(
+        promptConfig.systemPrompt,
+        ctx,
+        promptConfig.feedbackTypes
+      );
+    },
+  };
+}
+
+// Extract current section content for focused analysis
+function extractCurrentSection(content: string, currentH2: string): string {
+  if (!currentH2) return content;
+
+  // Split by H2 headings and find the current section
+  const h2Pattern = /(?=##\s+[^#])|(?=<h2[^>]*>)/gi;
+  const sections = content.split(h2Pattern);
+
+  for (const section of sections) {
+    if (section.toLowerCase().includes(currentH2.toLowerCase())) {
+      return section;
+    }
+  }
+
+  // If not found, return the last portion of content
+  return content.slice(-2000);
+}
+
 ipcMain.handle('ai:analyze', async (_, content: string, context: { h1: string; h2: string; allH2s: string[] }) => {
   const settings = loadSettings();
 
-  const systemPrompt = `You are a research assistant analyzing academic notes. Your task is to provide concise, actionable feedback to improve the research quality.
+  // Get prompt configuration from settings
+  const isSmallModel = settings.provider === 'builtin';
+  const promptConfig = getPromptConfig(settings);
 
-The user is working on research about: "${context.h1}"
-Current section focus: "${context.h2}"
-All sections in this note: ${context.allH2s.join(', ')}
+  // Adaptive chunking for built-in model:
+  // - Start with full content
+  // - Only chunk if previous response took > 2 seconds
+  let analysisContent = content;
+  if (isSmallModel && useAdaptiveChunking) {
+    console.log('[AI] Using adaptive chunking (previous response was slow)');
+    analysisContent = extractCurrentSection(content, context.h2);
+    analysisContent = truncateToTokenBudget(analysisContent, promptConfig.maxContentTokens);
+  } else if (isSmallModel) {
+    // Use full content but with a reasonable limit for context window
+    analysisContent = truncateToTokenBudget(content, 1500);
+  }
 
-Analyze the provided content and generate feedback in the following categories:
-1. MECE (Mutually Exclusive, Collectively Exhaustive) - Are categories well-organized? What's missing?
-2. GAPS - What aspects, considerations, or perspectives are not addressed?
-3. SOURCES - What types of literature or domains should be explored?
-4. STRUCTURE - How could the organization be improved?
-
-Respond in JSON format with an array of feedback items:
-{
-  "feedback": [
-    {
-      "type": "mece" | "gap" | "source" | "structure",
-      "text": "Your feedback (max 2 sentences)",
-      "relevantText": "The specific text this feedback relates to (if applicable)"
-    }
-  ]
-}
-
-Keep each feedback item to maximum 2 sentences. Be specific and actionable. Only provide feedback where genuinely useful - don't force feedback if the content is already good.`;
-
-  const userPrompt = `Please analyze this research note section:\n\n${content}`;
+  const systemPrompt = promptConfig.generatePrompt(context);
+  const userPrompt = `Analyze:\n\n${analysisContent}`;
 
   try {
-    if (settings.provider === 'ollama') {
+    if (settings.provider === 'builtin') {
+      // Use built-in local LLM with better error handling
+      const availability = await checkLocalLLMAvailable();
+      if (!availability.available) {
+        console.error('[AI] Local model not available:', availability.error);
+        return { feedback: [], error: availability.error };
+      }
+
+      const initResult = await initializeLocalLLM();
+      if (!initResult.success) {
+        console.error('[AI] Failed to initialize local LLM:', initResult.error);
+        return { feedback: [], error: initResult.error };
+      }
+
+      console.log('[AI] Generating response with local model...');
+      const startTime = Date.now();
+      const llmConfig: LLMConfig = {
+        contextSize: settings.llmContextSize || 2048,
+        maxTokens: settings.llmMaxTokens || 1024,
+        batchSize: settings.llmBatchSize || 512,
+      };
+      const result = await generateLocalResponse(systemPrompt, userPrompt, llmConfig);
+      lastResponseTime = Date.now() - startTime;
+
+      // Adapt chunking based on response time (use setting, default to 2000ms)
+      const threshold = settings.chunkingThresholdMs || 2000;
+      if (lastResponseTime > threshold) {
+        if (!useAdaptiveChunking) {
+          console.log(`[AI] Response took ${lastResponseTime}ms (> ${threshold}ms), enabling chunking for next request`);
+          useAdaptiveChunking = true;
+        }
+      } else {
+        if (useAdaptiveChunking) {
+          console.log(`[AI] Response took ${lastResponseTime}ms (< ${threshold}ms), disabling chunking`);
+          useAdaptiveChunking = false;
+        }
+      }
+
+      if (result.error) {
+        console.error('[AI] Local LLM generation error:', result.error);
+        // Graceful fallback: if Mistral API key exists, try that
+        if (settings.mistralApiKey) {
+          console.log('[AI] Falling back to Mistral API...');
+          return await callMistralAPI(settings.mistralApiKey, systemPrompt, `Analyze:\n\n${content}`);
+        }
+        return { feedback: [], error: result.error };
+      }
+
+      // Try to extract JSON from the response
+      try {
+        let responseText = result.response || '';
+
+        // Strip markdown code blocks if present
+        responseText = responseText.replace(/```json\s*/gi, '').replace(/```\s*/g, '');
+
+        // Find the JSON object
+        const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          // Clean up any trailing incomplete content
+          let jsonStr = jsonMatch[0];
+
+          // Try to fix incomplete JSON by finding proper closing
+          const openBraces = (jsonStr.match(/\{/g) || []).length;
+          const closeBraces = (jsonStr.match(/\}/g) || []).length;
+
+          if (openBraces > closeBraces) {
+            // JSON is incomplete, try to salvage what we can
+            console.warn('[AI] Incomplete JSON detected, attempting to fix...');
+            // Find the last complete feedback item
+            const lastCompleteItem = jsonStr.lastIndexOf('}]');
+            if (lastCompleteItem > 0) {
+              jsonStr = jsonStr.substring(0, lastCompleteItem + 2) + '}';
+            }
+          }
+
+          const parsed = JSON.parse(jsonStr);
+
+          // Get valid types from settings (or use defaults)
+          const feedbackTypes = settings.promptConfig?.feedbackTypes || DEFAULT_FEEDBACK_TYPES;
+          const validTypes = feedbackTypes.filter(t => t.enabled).map(t => t.id);
+
+          // Validate and clean up feedback items
+          if (parsed.feedback && Array.isArray(parsed.feedback)) {
+            parsed.feedback = parsed.feedback.filter((item: { type?: string; text?: string }) => {
+              // Filter out invalid types
+              if (item.type && !validTypes.includes(item.type)) {
+                // Try to extract a valid type from malformed entries
+                if (item.type.includes('|')) {
+                  item.type = item.type.split('|')[0];
+                }
+              }
+              return item.type && item.text && validTypes.includes(item.type);
+            });
+          }
+
+          return ensureSuggestions(parsed);
+        }
+        console.warn('[AI] No JSON found in response:', responseText.slice(0, 200));
+        return { feedback: [] };
+      } catch (parseError) {
+        console.error('[AI] Failed to parse local LLM response:', result.response?.slice(0, 300));
+        return { feedback: [] };
+      }
+    } else if (settings.provider === 'ollama') {
       const response = await fetch(`${settings.ollamaUrl}/api/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -239,9 +642,10 @@ Keep each feedback item to maximum 2 sentences. Be specific and actionable. Only
         throw new Error('Ollama request failed');
       }
 
-      const data = await response.json();
+      const data = await response.json() as { response: string };
       try {
-        return JSON.parse(data.response);
+        const parsed = JSON.parse(data.response);
+        return ensureSuggestions(parsed);
       } catch {
         return { feedback: [] };
       }
@@ -267,9 +671,10 @@ Keep each feedback item to maximum 2 sentences. Be specific and actionable. Only
         throw new Error('Mistral request failed');
       }
 
-      const data = await response.json();
+      const data = await response.json() as { choices: { message: { content: string } }[] };
       try {
-        return JSON.parse(data.choices[0].message.content);
+        const parsed = JSON.parse(data.choices[0].message.content);
+        return ensureSuggestions(parsed);
       } catch {
         return { feedback: [] };
       }
@@ -280,18 +685,69 @@ Keep each feedback item to maximum 2 sentences. Be specific and actionable. Only
   }
 });
 
+// Helper function to ensure all feedback items have suggestions
+function ensureSuggestions(response: { feedback?: Array<{ type: string; text: string; suggestion?: string }> }) {
+  if (!response.feedback || !Array.isArray(response.feedback)) {
+    return { feedback: [] };
+  }
+
+  const suggestionTemplates: Record<string, (text: string) => string> = {
+    mece: (text) => `## Additional Category\n\n${text}\n\nConsider exploring this aspect in more detail.`,
+    gap: (text) => `${text}\n\nThis perspective could strengthen the analysis by providing a more comprehensive view of the topic.`,
+    source: (text) => `### Recommended Sources\n\n${text}\n\n- Consider searching Google Scholar for related academic papers\n- Look for recent review articles in this domain`,
+    structure: (text) => `## Suggested Section\n\n${text}\n\n### Subsection A\n\n### Subsection B`,
+  };
+
+  response.feedback = response.feedback.map((item) => {
+    if (!item.suggestion || item.suggestion.trim() === '') {
+      const template = suggestionTemplates[item.type] || suggestionTemplates.gap;
+      item.suggestion = template(item.text);
+    }
+    return item;
+  });
+
+  return response;
+}
+
 ipcMain.handle('ai:checkConnection', async () => {
   const settings = loadSettings();
 
   try {
-    if (settings.provider === 'ollama') {
+    if (settings.provider === 'builtin') {
+      const availability = await checkLocalLLMAvailable();
+      if (!availability.available) {
+        console.log('[AI] Local model not available:', availability.error);
+        return false;
+      }
+      // Try to initialize the model
+      const initResult = await initializeLocalLLM();
+      return initResult.success;
+    } else if (settings.provider === 'ollama') {
       const response = await fetch(`${settings.ollamaUrl}/api/tags`);
       return response.ok;
     } else {
       // For Mistral, just check if API key is set
       return !!settings.mistralApiKey;
     }
-  } catch {
+  } catch (error) {
+    console.error('[AI] Connection check failed:', error);
     return false;
   }
+});
+
+// Get detailed LLM status for debugging
+ipcMain.handle('ai:getStatus', async () => {
+  const settings = loadSettings();
+  const status = getLocalLLMStatus();
+
+  return {
+    provider: settings.provider,
+    localLLM: status,
+    modelPath: settings.provider === 'builtin' ? 'qwen2.5-0.5b-instruct-q4_k_m.gguf' : null,
+  };
+});
+
+// Cleanup on app quit
+app.on('before-quit', async () => {
+  await disposeLocalLLM();
 });
