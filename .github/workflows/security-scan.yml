@@ -80,6 +80,13 @@ jobs:
           GITHUB_REF: ${{ github.ref }}
         run: node .github/scripts/create-linear-tickets.js
       
+      - name: Auto-close resolved vulnerabilities
+        if: always()
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          LINEAR_TEAM_ID: ${{ secrets.LINEAR_TEAM_ID }}
+        run: node .github/scripts/auto-close-fixed.js
+      
       - name: Generate summary
         if: always()
         run: |
