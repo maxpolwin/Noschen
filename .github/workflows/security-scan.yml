@@ -1,0 +1,103 @@
+name: Security Scan & Linear Tickets
+
+on:
+  push:
+    branches: [main, develop, master]
+  pull_request:
+    branches: [main, develop, master]
+  schedule:
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      issues: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'json'
+          output: 'trivy-results.json'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+        continue-on-error: true
+      
+      - name: Also generate SARIF for GitHub Security tab
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+        continue-on-error: true
+      
+      - name: Upload Trivy to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+      
+      - name: Gitleaks secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+      
+      - name: Semgrep security scan
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: >-
+            p/security-audit
+            p/typescript
+            p/python
+            p/owasp-top-ten
+          generateSarif: true
+        continue-on-error: true
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: Create Linear tickets from findings
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          LINEAR_TEAM_ID: ${{ secrets.LINEAR_TEAM_ID }}
+          LINEAR_SECURITY_LABEL_ID: ${{ secrets.LINEAR_SECURITY_LABEL_ID }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_REF: ${{ github.ref }}
+        run: node .github/scripts/create-linear-tickets.js
+      
+      - name: Generate summary
+        if: always()
+        run: |
+          echo "### 🔒 Security Scan Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Scans performed:**" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Trivy (dependencies)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Gitleaks (secrets)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Semgrep (code security)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📊 [View detailed results in Security tab](../security/code-scanning)" >> $GITHUB_STEP_SUMMARY
+          echo "📋 [Check Linear for created tickets](https://linear.app)" >> $GITHUB_STEP_SUMMARY
+      
+      - name: Upload scan results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-scan-results
+          path: |
+            trivy-results.json
+            trivy-results.sarif
+          retention-days: 30
