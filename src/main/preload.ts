@@ -118,8 +118,8 @@ const api = {
       ipcRenderer.invoke('spellcheck:getCurrentLanguages'),
   },
   stt: {
-    transcribe: (filePath: string): Promise<TranscriptionResult> =>
-      ipcRenderer.invoke('stt:transcribe', filePath),
+    transcribe: (fileBytes: number[], fileName: string): Promise<TranscriptionResult> =>
+      ipcRenderer.invoke('stt:transcribe', fileBytes, fileName),
     formatTranscript: (result: TranscriptionResult, fileName: string): Promise<string> =>
       ipcRenderer.invoke('stt:formatTranscript', result, fileName),
     checkAvailable: (): Promise<{ available: boolean; error?: string }> =>

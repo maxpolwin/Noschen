@@ -808,14 +808,13 @@ interface TranscriptionResult {
 
 // Transcribe via Mistral API (cloud or local Voxtral endpoint)
 async function transcribeMistral(
-  filePath: string,
+  fileBuffer: Buffer,
+  fileName: string,
   apiUrl: string,
   apiKey: string,
   stt: SttSettings
 ): Promise<TranscriptionResult> {
-  const fileBuffer = fs.readFileSync(filePath);
-  const mimeType = getAudioMimeType(filePath);
-  const fileName = path.basename(filePath);
+  const mimeType = getAudioMimeType(fileName);
 
   const blob = new Blob([fileBuffer], { type: mimeType });
   const formData = new FormData();
@@ -872,13 +871,12 @@ async function transcribeMistral(
 //   Returns: { text, segments?, duration? }
 // Also supports OpenAI-compatible /v1/audio/transcriptions if wrapped
 async function transcribeQwen(
-  filePath: string,
+  fileBuffer: Buffer,
+  fileName: string,
   baseUrl: string,
   stt: SttSettings
 ): Promise<TranscriptionResult> {
-  const fileBuffer = fs.readFileSync(filePath);
-  const mimeType = getAudioMimeType(filePath);
-  const fileName = path.basename(filePath);
+  const mimeType = getAudioMimeType(fileName);
 
   const blob = new Blob([fileBuffer], { type: mimeType });
   const formData = new FormData();
@@ -934,17 +932,18 @@ async function transcribeQwen(
   throw new Error(lastError || `Cannot reach Qwen STT server at ${baseUrl}`);
 }
 
-ipcMain.handle('stt:transcribe', async (_, filePath: string): Promise<TranscriptionResult> => {
+ipcMain.handle('stt:transcribe', async (_, fileBytes: number[], fileName: string): Promise<TranscriptionResult> => {
   const settings = loadSettings();
   const stt = settings.stt || getDefaultSettings().stt;
 
-  // Validate file exists
-  if (!fs.existsSync(filePath)) {
-    return { text: '', error: `File not found: ${filePath}` };
+  if (!fileBytes || fileBytes.length === 0) {
+    return { text: '', error: 'No audio data received' };
   }
 
+  const fileBuffer = Buffer.from(fileBytes);
+
   try {
-    console.log(`[STT] Transcribing ${path.basename(filePath)} via ${stt.sttProvider}...`);
+    console.log(`[STT] Transcribing ${fileName} (${(fileBuffer.length / 1024).toFixed(0)} KB) via ${stt.sttProvider}...`);
 
     let result: TranscriptionResult;
 
@@ -953,7 +952,8 @@ ipcMain.handle('stt:transcribe', async (_, filePath: string): Promise<Transcript
         return { text: '', error: 'Mistral API key not configured. Go to Settings > AI Provider to add your key.' };
       }
       result = await transcribeMistral(
-        filePath,
+        fileBuffer,
+        fileName,
         'https://api.mistral.ai/v1/audio/transcriptions',
         settings.mistralApiKey,
         stt
@@ -961,7 +961,8 @@ ipcMain.handle('stt:transcribe', async (_, filePath: string): Promise<Transcript
     } else if (stt.sttProvider === 'mistral-local') {
       const baseUrl = stt.localSttUrl.replace(/\/$/, '');
       result = await transcribeMistral(
-        filePath,
+        fileBuffer,
+        fileName,
         `${baseUrl}/v1/audio/transcriptions`,
         settings.mistralApiKey, // Optional for local
         stt
@@ -969,7 +970,7 @@ ipcMain.handle('stt:transcribe', async (_, filePath: string): Promise<Transcript
     } else {
       // qwen-edge: Qwen3-ASR-0.6B local server
       const baseUrl = (stt.qwenSttUrl || 'http://localhost:9000').replace(/\/$/, '');
-      result = await transcribeQwen(filePath, baseUrl, stt);
+      result = await transcribeQwen(fileBuffer, fileName, baseUrl, stt);
     }
 
     console.log(`[STT] Transcription complete: ${result.text?.length || 0} chars`);

@@ -374,15 +374,12 @@ function Editor({
 
     try {
       for (const file of audioFiles) {
-        // Electron provides a `path` property on dropped File objects
-        const filePath = (file as File & { path?: string }).path;
-        if (!filePath) {
-          setTranscriptionError('Could not read file path. Please try again.');
-          continue;
-        }
+        // Read file as ArrayBuffer since file.path isn't available with contextIsolation
+        const arrayBuffer = await file.arrayBuffer();
+        const bytes = new Uint8Array(arrayBuffer);
 
-        // Transcribe the audio file
-        const result = await window.api.stt.transcribe(filePath);
+        // Transcribe the audio file (send bytes + name to main process)
+        const result = await window.api.stt.transcribe(Array.from(bytes), file.name);
 
         if (result.error) {
           setTranscriptionError(result.error);
