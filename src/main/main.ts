@@ -822,8 +822,10 @@ async function transcribeMistral(
   formData.append('file', blob, fileName);
   formData.append('model', 'voxtral-mini-latest');
 
+  // Mistral expects timestamp_granularities as separate array entries
   if (stt.sttTimestamps) {
-    formData.append('timestamp_granularities', JSON.stringify(['word', 'segment']));
+    formData.append('timestamp_granularities[]', 'word');
+    formData.append('timestamp_granularities[]', 'segment');
   }
   if (stt.sttDiarize) {
     formData.append('diarize', 'true');
@@ -844,8 +846,15 @@ async function transcribeMistral(
   });
 
   if (!response.ok) {
-    const errorText = await response.text().catch(() => 'Unknown error');
-    throw new Error(`Mistral API error (${response.status}): ${errorText}`);
+    // Parse error body properly - Mistral returns JSON errors
+    let errorDetail: string;
+    try {
+      const errorBody = await response.json() as any;
+      errorDetail = errorBody?.message || errorBody?.detail || errorBody?.error?.message || JSON.stringify(errorBody);
+    } catch {
+      errorDetail = await response.text().catch(() => 'Unknown error');
+    }
+    throw new Error(`Mistral API error (${response.status}): ${errorDetail}`);
   }
 
   const data = await response.json() as TranscriptionResult;
@@ -897,7 +906,14 @@ async function transcribeQwen(
       });
 
       if (!response.ok) {
-        lastError = `Qwen API error (${response.status}): ${await response.text().catch(() => 'Unknown')}`;
+        let detail: string;
+        try {
+          const errBody = await response.json() as any;
+          detail = errBody?.message || errBody?.detail || errBody?.error?.message || JSON.stringify(errBody);
+        } catch {
+          detail = await response.text().catch(() => 'Unknown');
+        }
+        lastError = `Qwen API error (${response.status}): ${detail}`;
         continue;
       }
 
