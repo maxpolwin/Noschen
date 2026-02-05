@@ -38,6 +38,8 @@ function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
   const [sttTestResult, setSttTestResult] = useState<'success' | 'error' | null>(null);
   const [availableLanguages, setAvailableLanguages] = useState<SpellcheckLanguage[]>([]);
   const [activeTab, setActiveTab] = useState<'ai' | 'editor' | 'prompts' | 'transcription'>('ai');
+  const [showLogViewer, setShowLogViewer] = useState(false);
+  const [logContent, setLogContent] = useState('');
 
   useEffect(() => {
     loadSettings();
@@ -428,6 +430,80 @@ function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
                           <strong>Note:</strong> Restart the app after changing these settings for them to take effect.
                         </p>
                       </div>
+
+                      {/* Debug Logs Section */}
+                      <div className="form-group" style={{ marginTop: '16px', borderTop: '1px solid var(--border-subtle)', paddingTop: '16px' }}>
+                        <label className="form-label">Debug Logs (STT)</label>
+                        <p className="form-hint" style={{ marginBottom: '10px' }}>
+                          Transcription logs are kept for 2 days, then automatically deleted.
+                        </p>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <button
+                            className="btn btn-secondary"
+                            style={{ flex: 1, fontSize: '12px' }}
+                            onClick={() => window.api.logs.openFolder()}
+                          >
+                            Open Logs Folder
+                          </button>
+                          <button
+                            className="btn btn-secondary"
+                            style={{ flex: 1, fontSize: '12px' }}
+                            onClick={async () => {
+                              const files = await window.api.logs.list();
+                              if (files.length === 0) {
+                                setLogContent('No log files found.');
+                              } else {
+                                const content = await window.api.logs.read(files[0].name);
+                                setLogContent(content);
+                              }
+                              setShowLogViewer(true);
+                            }}
+                          >
+                            View Latest Log
+                          </button>
+                        </div>
+                      </div>
+
+                      {showLogViewer && (
+                        <div className="form-group">
+                          <div style={{
+                            background: '#0a0a0a',
+                            border: '1px solid var(--border-subtle)',
+                            borderRadius: '6px',
+                            padding: '12px',
+                            maxHeight: '300px',
+                            overflow: 'auto',
+                            position: 'relative',
+                          }}>
+                            <button
+                              onClick={() => setShowLogViewer(false)}
+                              style={{
+                                position: 'sticky',
+                                top: 0,
+                                float: 'right',
+                                background: 'var(--bg-tertiary)',
+                                padding: '2px 8px',
+                                borderRadius: '4px',
+                                fontSize: '11px',
+                                color: 'var(--text-muted)',
+                              }}
+                            >
+                              Close
+                            </button>
+                            <pre style={{
+                              fontSize: '10px',
+                              lineHeight: 1.5,
+                              color: 'var(--text-secondary)',
+                              whiteSpace: 'pre-wrap',
+                              wordBreak: 'break-all',
+                              margin: 0,
+                              fontFamily: 'ui-monospace, "SF Mono", Monaco, "Cascadia Code", monospace',
+                            }}>
+                              {logContent}
+                            </pre>
+                          </div>
+                        </div>
+                      )}
                     </>
                   )}
                 </>

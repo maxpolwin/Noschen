@@ -374,12 +374,17 @@ function Editor({
 
     try {
       for (const file of audioFiles) {
-        // Read file as ArrayBuffer since file.path isn't available with contextIsolation
+        // Read file as base64 string for safe IPC transfer (avoids "Invalid array length")
         const arrayBuffer = await file.arrayBuffer();
         const bytes = new Uint8Array(arrayBuffer);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) {
+          binary += String.fromCharCode(bytes[i]);
+        }
+        const base64 = btoa(binary);
 
-        // Transcribe the audio file (send bytes + name to main process)
-        const result = await window.api.stt.transcribe(Array.from(bytes), file.name);
+        // Transcribe the audio file (send base64 + name to main process)
+        const result = await window.api.stt.transcribe(base64, file.name);
 
         if (result.error) {
           setTranscriptionError(result.error);

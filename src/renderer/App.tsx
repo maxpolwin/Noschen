@@ -30,9 +30,14 @@ declare global {
         getCurrentLanguages: () => Promise<string[]>;
       };
       stt: {
-        transcribe: (fileBytes: number[], fileName: string) => Promise<TranscriptionResult>;
+        transcribe: (fileBase64: string, fileName: string) => Promise<TranscriptionResult>;
         formatTranscript: (result: TranscriptionResult, fileName: string) => Promise<string>;
         checkAvailable: () => Promise<{ available: boolean; error?: string }>;
+      };
+      logs: {
+        openFolder: () => Promise<void>;
+        list: () => Promise<{ name: string; size: number; modified: string }[]>;
+        read: (fileName: string) => Promise<string>;
       };
     };
   }

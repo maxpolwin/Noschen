@@ -11,6 +11,7 @@ import {
   LLMConfig,
   getLocalLLMStatus,
 } from './llm/localLLM';
+import { sttLog, cleanOldLogs, listLogFiles, readLogFile, getLogsDir } from './sttLogger';
 
 interface Note {
   id: string;
@@ -932,25 +933,37 @@ async function transcribeQwen(
   throw new Error(lastError || `Cannot reach Qwen STT server at ${baseUrl}`);
 }
 
-ipcMain.handle('stt:transcribe', async (_, fileBytes: number[], fileName: string): Promise<TranscriptionResult> => {
+ipcMain.handle('stt:transcribe', async (_, fileBase64: string, fileName: string): Promise<TranscriptionResult> => {
   const settings = loadSettings();
   const stt = settings.stt || getDefaultSettings().stt;
 
-  if (!fileBytes || fileBytes.length === 0) {
+  if (!fileBase64 || fileBase64.length === 0) {
+    sttLog('ERROR', 'No audio data received');
     return { text: '', error: 'No audio data received' };
   }
 
-  const fileBuffer = Buffer.from(fileBytes);
+  const fileBuffer = Buffer.from(fileBase64, 'base64');
+  const sizeKB = (fileBuffer.length / 1024).toFixed(0);
+
+  sttLog('INFO', `Transcription started: ${fileName} (${sizeKB} KB) via ${stt.sttProvider}`, {
+    provider: stt.sttProvider,
+    fileName,
+    sizeBytes: fileBuffer.length,
+    timestamps: stt.sttTimestamps,
+    diarize: stt.sttDiarize,
+    language: stt.sttLanguage || 'auto',
+  });
 
   try {
-    console.log(`[STT] Transcribing ${fileName} (${(fileBuffer.length / 1024).toFixed(0)} KB) via ${stt.sttProvider}...`);
-
     let result: TranscriptionResult;
 
     if (stt.sttProvider === 'mistral-cloud') {
       if (!settings.mistralApiKey) {
-        return { text: '', error: 'Mistral API key not configured. Go to Settings > AI Provider to add your key.' };
+        const err = 'Mistral API key not configured. Go to Settings > AI Provider to add your key.';
+        sttLog('ERROR', err);
+        return { text: '', error: err };
       }
+      sttLog('DEBUG', 'Calling Mistral Cloud API: https://api.mistral.ai/v1/audio/transcriptions');
       result = await transcribeMistral(
         fileBuffer,
         fileName,
@@ -960,24 +973,34 @@ ipcMain.handle('stt:transcribe', async (_, fileBytes: number[], fileName: string
       );
     } else if (stt.sttProvider === 'mistral-local') {
       const baseUrl = stt.localSttUrl.replace(/\/$/, '');
+      const apiUrl = `${baseUrl}/v1/audio/transcriptions`;
+      sttLog('DEBUG', `Calling Mistral Local: ${apiUrl}`);
       result = await transcribeMistral(
         fileBuffer,
         fileName,
-        `${baseUrl}/v1/audio/transcriptions`,
-        settings.mistralApiKey, // Optional for local
+        apiUrl,
+        settings.mistralApiKey,
         stt
       );
     } else {
-      // qwen-edge: Qwen3-ASR-0.6B local server
       const baseUrl = (stt.qwenSttUrl || 'http://localhost:9000').replace(/\/$/, '');
+      sttLog('DEBUG', `Calling Qwen Edge: ${baseUrl}`);
       result = await transcribeQwen(fileBuffer, fileName, baseUrl, stt);
     }
 
-    console.log(`[STT] Transcription complete: ${result.text?.length || 0} chars`);
+    sttLog('INFO', `Transcription complete: ${result.text?.length || 0} chars, ${result.segments?.length || 0} segments`, {
+      textLength: result.text?.length,
+      segmentCount: result.segments?.length,
+      wordCount: result.words?.length,
+      duration: result.duration,
+      textPreview: result.text?.substring(0, 200),
+    });
     return result;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown transcription error';
-    console.error('[STT] Transcription error:', errorMessage);
+    sttLog('ERROR', `Transcription failed: ${errorMessage}`, {
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return { text: '', error: errorMessage };
   }
 });
@@ -1071,6 +1094,27 @@ ipcMain.handle('stt:checkAvailable', async (): Promise<{ available: boolean; err
     }
   }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LOG FILE ACCESS
+// ═══════════════════════════════════════════════════════════════════════════
+
+ipcMain.handle('logs:openFolder', async () => {
+  const { shell } = require('electron');
+  shell.openPath(getLogsDir());
+});
+
+ipcMain.handle('logs:list', async () => {
+  return listLogFiles();
+});
+
+ipcMain.handle('logs:read', async (_, fileName: string) => {
+  return readLogFile(fileName);
+});
+
+// Clean old logs on startup (2-day retention)
+cleanOldLogs();
+sttLog('INFO', 'Noschen started, STT logger initialized');
 
 // Cleanup on app quit
 app.on('before-quit', async () => {
