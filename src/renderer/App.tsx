@@ -3,7 +3,7 @@ import Sidebar from './components/Sidebar';
 import Editor from './components/Editor';
 import SettingsModal from './components/SettingsModal';
 import EmptyState from './components/EmptyState';
-import { Note, AISettings, FeedbackItem, SpellcheckLanguage } from '../shared/types';
+import { Note, AISettings, FeedbackItem, SpellcheckLanguage, TranscriptionResult } from '../shared/types';
 
 declare global {
   interface Window {
@@ -28,6 +28,11 @@ declare global {
       spellcheck: {
         getAvailableLanguages: () => Promise<SpellcheckLanguage[]>;
         getCurrentLanguages: () => Promise<string[]>;
+      };
+      stt: {
+        transcribe: (filePath: string) => Promise<TranscriptionResult>;
+        formatTranscript: (result: TranscriptionResult, fileName: string) => Promise<string>;
+        checkAvailable: () => Promise<{ available: boolean; error?: string }>;
       };
     };
   }

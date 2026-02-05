@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
-import { X, Languages, Check, Plus, Trash2, RotateCcw, MessageSquare, ChevronDown, ChevronRight } from 'lucide-react';
-import { AISettings, SpellcheckLanguage, FeedbackTypeConfig, DEFAULT_FEEDBACK_TYPES, DEFAULT_SYSTEM_PROMPT, FeedbackCategory, FEEDBACK_CATEGORY_LABELS, FeedbackTypeConfigWithCategory } from '../../shared/types';
+import { X, Languages, Check, Plus, Trash2, RotateCcw, MessageSquare, ChevronDown, ChevronRight, Mic } from 'lucide-react';
+import { AISettings, SpellcheckLanguage, FeedbackTypeConfig, DEFAULT_FEEDBACK_TYPES, DEFAULT_SYSTEM_PROMPT, FeedbackCategory, FEEDBACK_CATEGORY_LABELS, FeedbackTypeConfigWithCategory, SttSettings } from '../../shared/types';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -23,12 +23,20 @@ function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
       systemPrompt: DEFAULT_SYSTEM_PROMPT,
       feedbackTypes: DEFAULT_FEEDBACK_TYPES,
     },
+    stt: {
+      sttProvider: 'mistral-cloud',
+      localSttUrl: 'http://localhost:8000',
+      sttTimestamps: true,
+      sttDiarize: false,
+      sttLanguage: '',
+    },
   });
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
+  const [sttTestResult, setSttTestResult] = useState<'success' | 'error' | null>(null);
   const [availableLanguages, setAvailableLanguages] = useState<SpellcheckLanguage[]>([]);
-  const [activeTab, setActiveTab] = useState<'ai' | 'editor' | 'prompts'>('ai');
+  const [activeTab, setActiveTab] = useState<'ai' | 'editor' | 'prompts' | 'transcription'>('ai');
 
   useEffect(() => {
     loadSettings();
@@ -49,6 +57,13 @@ function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
       promptConfig: loaded.promptConfig ?? {
         systemPrompt: DEFAULT_SYSTEM_PROMPT,
         feedbackTypes: DEFAULT_FEEDBACK_TYPES,
+      },
+      stt: loaded.stt ?? {
+        sttProvider: 'mistral-cloud',
+        localSttUrl: 'http://localhost:8000',
+        sttTimestamps: true,
+        sttDiarize: false,
+        sttLanguage: '',
       },
     });
   };
@@ -241,6 +256,13 @@ function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
           >
             <MessageSquare size={16} />
             Prompts
+          </button>
+          <button
+            className={`modal-tab ${activeTab === 'transcription' ? 'active' : ''}`}
+            onClick={() => setActiveTab('transcription')}
+          >
+            <Mic size={16} />
+            Transcription
           </button>
           <button
             className={`modal-tab ${activeTab === 'editor' ? 'active' : ''}`}
@@ -736,6 +758,192 @@ function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
                   Feedback types define the categories of suggestions the AI will provide.
                   Enable the types relevant to your work. The AI will auto-detect content type (research, strategy, meeting notes).
                 </p>
+              </div>
+            </>
+          )}
+
+          {activeTab === 'transcription' && (
+            <>
+              <div className="form-group">
+                <p className="form-hint" style={{ background: 'var(--bg-tertiary)', padding: '12px', borderRadius: '6px', marginBottom: '16px' }}>
+                  Drag and drop audio files (MP3, WAV, FLAC, etc.) onto any note to automatically transcribe them.
+                  Powered by Mistral Voxtral Transcribe 2 with word-level timestamps and speaker diarization.
+                </p>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Transcription Provider</label>
+                <select
+                  className="form-select"
+                  value={settings.stt.sttProvider}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      stt: { ...settings.stt, sttProvider: e.target.value as SttSettings['sttProvider'] },
+                    })
+                  }
+                >
+                  <option value="mistral-cloud">Mistral Cloud API (Voxtral Transcribe 2)</option>
+                  <option value="mistral-local">Local / On-Prem (Self-hosted Voxtral)</option>
+                </select>
+                <p className="form-hint">
+                  {settings.stt.sttProvider === 'mistral-cloud'
+                    ? 'Uses Mistral\'s cloud API. Requires a Mistral API key (same as AI Provider settings).'
+                    : 'Connect to a self-hosted Voxtral endpoint (e.g., vLLM or TGI serving Voxtral Mini 3B).'}
+                </p>
+              </div>
+
+              {settings.stt.sttProvider === 'mistral-cloud' && !settings.mistralApiKey && (
+                <div className="form-group">
+                  <p className="form-hint" style={{ background: 'var(--warning-glow)', padding: '12px', borderRadius: '6px', color: 'var(--warning-color)' }}>
+                    Mistral API key is required. Set it in the <strong>AI Provider</strong> tab or enter it here:
+                  </p>
+                  <input
+                    type="password"
+                    className="form-input"
+                    value={settings.mistralApiKey}
+                    onChange={(e) => setSettings({ ...settings, mistralApiKey: e.target.value })}
+                    placeholder="Enter your Mistral API key"
+                    style={{ marginTop: '8px' }}
+                  />
+                </div>
+              )}
+
+              {settings.stt.sttProvider === 'mistral-local' && (
+                <div className="form-group">
+                  <label className="form-label">Local Endpoint URL</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={settings.stt.localSttUrl}
+                    onChange={(e) =>
+                      setSettings({
+                        ...settings,
+                        stt: { ...settings.stt, localSttUrl: e.target.value },
+                      })
+                    }
+                    placeholder="http://localhost:8000"
+                  />
+                  <p className="form-hint">
+                    The base URL of your local Voxtral server. The app will POST to <code>{settings.stt.localSttUrl}/v1/audio/transcriptions</code>.
+                  </p>
+                  <div style={{ background: 'var(--bg-tertiary)', padding: '10px 12px', borderRadius: '6px', marginTop: '8px', fontSize: '11px', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                    <strong style={{ color: 'var(--text-primary)' }}>Setup Guide:</strong><br />
+                    1. Download <code>Voxtral-Mini-3B</code> (Apache 2.0, ~5GB quantized)<br />
+                    2. Serve with vLLM: <code>vllm serve mistralai/Voxtral-Mini-3B-2507</code><br />
+                    3. Or use the GGUF version with llama.cpp server
+                  </div>
+                </div>
+              )}
+
+              {/* Transcription options */}
+              <div className="form-group">
+                <label className="form-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span>Word-level Timestamps</span>
+                  <button
+                    className={`toggle-switch ${settings.stt.sttTimestamps ? 'active' : ''}`}
+                    onClick={() =>
+                      setSettings({
+                        ...settings,
+                        stt: { ...settings.stt, sttTimestamps: !settings.stt.sttTimestamps },
+                      })
+                    }
+                  >
+                    <span className="toggle-slider" />
+                  </button>
+                </label>
+                <p className="form-hint">
+                  Include timestamps in the transcript output (e.g., [0:15] "The quick brown fox...").
+                </p>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span>Speaker Diarization</span>
+                  <button
+                    className={`toggle-switch ${settings.stt.sttDiarize ? 'active' : ''}`}
+                    onClick={() =>
+                      setSettings({
+                        ...settings,
+                        stt: { ...settings.stt, sttDiarize: !settings.stt.sttDiarize },
+                      })
+                    }
+                  >
+                    <span className="toggle-slider" />
+                  </button>
+                </label>
+                <p className="form-hint">
+                  Identify and label different speakers in the transcript. Works best with the cloud API.
+                </p>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Language</label>
+                <select
+                  className="form-select"
+                  value={settings.stt.sttLanguage}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      stt: { ...settings.stt, sttLanguage: e.target.value },
+                    })
+                  }
+                >
+                  <option value="">Auto-detect</option>
+                  <option value="en">English</option>
+                  <option value="de">German</option>
+                  <option value="fr">French</option>
+                  <option value="es">Spanish</option>
+                  <option value="it">Italian</option>
+                  <option value="pt">Portuguese</option>
+                  <option value="nl">Dutch</option>
+                  <option value="ru">Russian</option>
+                  <option value="zh">Chinese</option>
+                  <option value="ja">Japanese</option>
+                  <option value="ko">Korean</option>
+                  <option value="ar">Arabic</option>
+                  <option value="hi">Hindi</option>
+                </select>
+                <p className="form-hint">
+                  Set the audio language for better accuracy, or leave as auto-detect.
+                </p>
+              </div>
+
+              <div className="form-group">
+                <button
+                  className="btn btn-secondary"
+                  onClick={async () => {
+                    setSttTestResult(null);
+                    const result = await window.api.stt.checkAvailable();
+                    setSttTestResult(result.available ? 'success' : 'error');
+                  }}
+                  style={{ width: '100%' }}
+                >
+                  Test Transcription Connection
+                </button>
+                {sttTestResult && (
+                  <p
+                    className="form-hint"
+                    style={{
+                      color: sttTestResult === 'success' ? 'var(--success-color)' : 'var(--error-color)',
+                      marginTop: '8px',
+                    }}
+                  >
+                    {sttTestResult === 'success'
+                      ? 'Transcription service is available!'
+                      : 'Cannot reach transcription service. Check your settings.'}
+                  </p>
+                )}
+              </div>
+
+              {/* Qwen evaluation note */}
+              <div className="form-group">
+                <div style={{ background: 'var(--bg-tertiary)', padding: '12px', borderRadius: '6px', fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                  <strong style={{ color: 'var(--text-secondary)' }}>Why Mistral and not Qwen?</strong><br />
+                  Qwen2-Audio was evaluated but does not provide word-level timestamps or speaker diarization.
+                  Mistral Voxtral Transcribe 2 offers both features natively, along with context biasing and 13-language
+                  support, making it the more capable option for transcription.
+                </div>
               </div>
             </>
           )}

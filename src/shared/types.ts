@@ -7,6 +7,51 @@ export interface Note {
   excludedSections: string[];
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// SPEECH-TO-TEXT (Transcription)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type SttProvider = 'mistral-cloud' | 'mistral-local';
+
+export interface SttSettings {
+  sttProvider: SttProvider;
+  localSttUrl: string;          // For local/on-prem Voxtral endpoint (e.g. http://localhost:8000)
+  sttTimestamps: boolean;       // Include word-level timestamps
+  sttDiarize: boolean;          // Enable speaker diarization
+  sttLanguage: string;          // Language code (e.g. 'en', 'de', 'fr') or empty for auto-detect
+}
+
+export interface TranscriptionWord {
+  word: string;
+  start: number;
+  end: number;
+}
+
+export interface TranscriptionSegment {
+  start: number;
+  end: number;
+  text: string;
+  speaker?: string;
+}
+
+export interface TranscriptionResult {
+  text: string;
+  words?: TranscriptionWord[];
+  segments?: TranscriptionSegment[];
+  duration?: number;            // Total audio duration in seconds
+  error?: string;
+}
+
+// Supported audio file extensions for drag-and-drop
+export const SUPPORTED_AUDIO_EXTENSIONS = [
+  '.mp3', '.wav', '.wave', '.m4a', '.flac', '.ogg', '.opus', '.wma', '.aac', '.webm',
+];
+
+export const SUPPORTED_AUDIO_MIME_TYPES = [
+  'audio/mpeg', 'audio/wav', 'audio/wave', 'audio/x-wav', 'audio/mp4', 'audio/m4a',
+  'audio/flac', 'audio/ogg', 'audio/opus', 'audio/x-ms-wma', 'audio/aac', 'audio/webm',
+];
+
 // Custom feedback type configuration
 export interface FeedbackTypeConfig {
   id: string;           // Unique identifier (e.g., 'gap', 'mece', 'custom1')
@@ -36,6 +81,8 @@ export interface AISettings {
   llmBatchSize: number;     // Batch size for inference (default: 512)
   // Prompt configuration
   promptConfig: PromptConfig;
+  // Speech-to-text configuration
+  stt: SttSettings;
 }
 
 export interface SpellcheckLanguage {
