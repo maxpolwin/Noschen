@@ -3,8 +3,8 @@ import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
 import Heading from '@tiptap/extension-heading';
-import { Trash2, Eye, EyeOff } from 'lucide-react';
-import { Note, FeedbackItem } from '../../shared/types';
+import { Trash2, Eye, EyeOff, Mic, Loader2, AlertCircle } from 'lucide-react';
+import { Note, FeedbackItem, SUPPORTED_AUDIO_EXTENSIONS } from '../../shared/types';
 import FeedbackPanel from './FeedbackPanel';
 
 interface EditorProps {
@@ -58,6 +58,12 @@ function Editor({
   const [lastContent, setLastContent] = useState(note.content);
   const analysisTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Drag-and-drop transcription state
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [transcriptionError, setTranscriptionError] = useState<string | null>(null);
+  const dragCounterRef = useRef(0);
 
   const editor = useEditor({
     extensions: [
@@ -295,6 +301,121 @@ function Editor({
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [editor, note, activeFeedback, onSave]);
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // DRAG-AND-DROP AUDIO TRANSCRIPTION
+  // ═══════════════════════════════════════════════════════════════════════
+
+  const isAudioFile = useCallback((file: File | DataTransferItem): boolean => {
+    // Check by MIME type
+    if (file.type && file.type.startsWith('audio/')) return true;
+    // Check by extension (for File objects with name)
+    if ('name' in file && file.name) {
+      const ext = '.' + file.name.split('.').pop()?.toLowerCase();
+      return SUPPORTED_AUDIO_EXTENSIONS.includes(ext);
+    }
+    return false;
+  }, []);
+
+  const hasAudioFiles = useCallback((dataTransfer: DataTransfer): boolean => {
+    for (let i = 0; i < dataTransfer.items.length; i++) {
+      const item = dataTransfer.items[i];
+      if (item.kind === 'file' && (item.type.startsWith('audio/') || item.type === '')) {
+        return true; // Might be audio - check on drop
+      }
+    }
+    return false;
+  }, []);
+
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current++;
+    if (hasAudioFiles(e.dataTransfer)) {
+      setIsDragOver(true);
+    }
+  }, [hasAudioFiles]);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current--;
+    if (dragCounterRef.current === 0) {
+      setIsDragOver(false);
+    }
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+    dragCounterRef.current = 0;
+
+    if (!editor) return;
+
+    // Find audio files in the drop
+    const audioFiles: File[] = [];
+    for (let i = 0; i < e.dataTransfer.files.length; i++) {
+      const file = e.dataTransfer.files[i];
+      if (isAudioFile(file)) {
+        audioFiles.push(file);
+      }
+    }
+
+    if (audioFiles.length === 0) return;
+
+    // Clear any previous error
+    setTranscriptionError(null);
+    setIsTranscribing(true);
+
+    try {
+      for (const file of audioFiles) {
+        // Electron provides a `path` property on dropped File objects
+        const filePath = (file as File & { path?: string }).path;
+        if (!filePath) {
+          setTranscriptionError('Could not read file path. Please try again.');
+          continue;
+        }
+
+        // Transcribe the audio file
+        const result = await window.api.stt.transcribe(filePath);
+
+        if (result.error) {
+          setTranscriptionError(result.error);
+          continue;
+        }
+
+        if (!result.text) {
+          setTranscriptionError('Transcription returned empty text.');
+          continue;
+        }
+
+        // Format the transcript as HTML
+        const html = await window.api.stt.formatTranscript(result, file.name);
+
+        // Insert transcript at cursor position (or end of document)
+        editor.chain().focus('end').insertContent(html).run();
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Transcription failed';
+      setTranscriptionError(msg);
+    } finally {
+      setIsTranscribing(false);
+    }
+  }, [editor, isAudioFile]);
+
+  // Auto-dismiss transcription error after 8 seconds
+  useEffect(() => {
+    if (transcriptionError) {
+      const timeout = setTimeout(() => setTranscriptionError(null), 8000);
+      return () => clearTimeout(timeout);
+    }
+  }, [transcriptionError]);
+
   return (
     <>
       <div className="editor-header">
@@ -331,7 +452,41 @@ function Editor({
           </button>
         </div>
       </div>
-      <div className="editor-content">
+      <div
+        className={`editor-content ${isDragOver ? 'drag-over' : ''}`}
+        onDragEnter={handleDragEnter}
+        onDragLeave={handleDragLeave}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
+      >
+        {/* Drop zone overlay */}
+        {isDragOver && (
+          <div className="drop-zone-overlay">
+            <div className="drop-zone-content">
+              <Mic size={48} />
+              <p className="drop-zone-title">Drop audio file to transcribe</p>
+              <p className="drop-zone-hint">MP3, WAV, M4A, FLAC, OGG, and more</p>
+            </div>
+          </div>
+        )}
+
+        {/* Transcription progress indicator */}
+        {isTranscribing && (
+          <div className="transcription-progress">
+            <Loader2 size={16} className="spin" />
+            <span>Transcribing audio...</span>
+          </div>
+        )}
+
+        {/* Transcription error */}
+        {transcriptionError && (
+          <div className="transcription-error">
+            <AlertCircle size={14} />
+            <span>{transcriptionError}</span>
+            <button onClick={() => setTranscriptionError(null)}>&times;</button>
+          </div>
+        )}
+
         <EditorContent editor={editor} />
 
         {activeFeedback.length > 0 && (

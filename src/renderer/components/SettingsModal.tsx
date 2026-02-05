@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
-import { X, Languages, Check, Plus, Trash2, RotateCcw, MessageSquare, ChevronDown, ChevronRight } from 'lucide-react';
-import { AISettings, SpellcheckLanguage, FeedbackTypeConfig, DEFAULT_FEEDBACK_TYPES, DEFAULT_SYSTEM_PROMPT, FeedbackCategory, FEEDBACK_CATEGORY_LABELS, FeedbackTypeConfigWithCategory } from '../../shared/types';
+import { X, Languages, Check, Plus, Trash2, RotateCcw, MessageSquare, ChevronDown, ChevronRight, Mic } from 'lucide-react';
+import { AISettings, SpellcheckLanguage, FeedbackTypeConfig, DEFAULT_FEEDBACK_TYPES, DEFAULT_SYSTEM_PROMPT, FeedbackCategory, FEEDBACK_CATEGORY_LABELS, FeedbackTypeConfigWithCategory, SttSettings } from '../../shared/types';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -23,12 +23,21 @@ function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
       systemPrompt: DEFAULT_SYSTEM_PROMPT,
       feedbackTypes: DEFAULT_FEEDBACK_TYPES,
     },
+    stt: {
+      sttProvider: 'mistral-cloud',
+      localSttUrl: 'http://localhost:8000',
+      qwenSttUrl: 'http://localhost:9000',
+      sttTimestamps: true,
+      sttDiarize: false,
+      sttLanguage: '',
+    },
   });
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
+  const [sttTestResult, setSttTestResult] = useState<'success' | 'error' | null>(null);
   const [availableLanguages, setAvailableLanguages] = useState<SpellcheckLanguage[]>([]);
-  const [activeTab, setActiveTab] = useState<'ai' | 'editor' | 'prompts'>('ai');
+  const [activeTab, setActiveTab] = useState<'ai' | 'editor' | 'prompts' | 'transcription'>('ai');
 
   useEffect(() => {
     loadSettings();
@@ -49,6 +58,14 @@ function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
       promptConfig: loaded.promptConfig ?? {
         systemPrompt: DEFAULT_SYSTEM_PROMPT,
         feedbackTypes: DEFAULT_FEEDBACK_TYPES,
+      },
+      stt: loaded.stt ?? {
+        sttProvider: 'mistral-cloud',
+        localSttUrl: 'http://localhost:8000',
+        qwenSttUrl: 'http://localhost:9000',
+        sttTimestamps: true,
+        sttDiarize: false,
+        sttLanguage: '',
       },
     });
   };
@@ -241,6 +258,13 @@ function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
           >
             <MessageSquare size={16} />
             Prompts
+          </button>
+          <button
+            className={`modal-tab ${activeTab === 'transcription' ? 'active' : ''}`}
+            onClick={() => setActiveTab('transcription')}
+          >
+            <Mic size={16} />
+            Transcription
           </button>
           <button
             className={`modal-tab ${activeTab === 'editor' ? 'active' : ''}`}
@@ -736,6 +760,260 @@ function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
                   Feedback types define the categories of suggestions the AI will provide.
                   Enable the types relevant to your work. The AI will auto-detect content type (research, strategy, meeting notes).
                 </p>
+              </div>
+            </>
+          )}
+
+          {activeTab === 'transcription' && (
+            <>
+              <div className="form-group">
+                <p className="form-hint" style={{ background: 'var(--bg-tertiary)', padding: '12px', borderRadius: '6px', marginBottom: '16px' }}>
+                  Drag and drop audio files (MP3, WAV, FLAC, etc.) onto any note to automatically transcribe them.
+                  Choose between Mistral Voxtral (cloud or local) and Qwen3-ASR edge models.
+                </p>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Transcription Provider</label>
+                <select
+                  className="form-select"
+                  value={settings.stt.sttProvider}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      stt: { ...settings.stt, sttProvider: e.target.value as SttSettings['sttProvider'] },
+                    })
+                  }
+                >
+                  <option value="mistral-cloud">Mistral Cloud API (Voxtral Transcribe 2)</option>
+                  <option value="mistral-local">Mistral Local (Voxtral Mini 3B Edge)</option>
+                  <option value="qwen-edge">Qwen3-ASR-0.6B Edge (Local)</option>
+                </select>
+                <p className="form-hint">
+                  {settings.stt.sttProvider === 'mistral-cloud'
+                    ? 'Uses Mistral\'s cloud API ($0.003/min). Requires a Mistral API key. Best accuracy with diarization.'
+                    : settings.stt.sttProvider === 'mistral-local'
+                    ? 'Self-hosted Voxtral Mini 3B (Apache 2.0, ~3B params, ~5GB quantized). Requires GPU with ≥10GB VRAM.'
+                    : 'Ultra-lightweight Qwen3-ASR-0.6B (Apache 2.0, ~1.3GB Q8). Runs on CPU. Supports 52 languages.'}
+                </p>
+              </div>
+
+              {/* Mistral Cloud: API key */}
+              {settings.stt.sttProvider === 'mistral-cloud' && !settings.mistralApiKey && (
+                <div className="form-group">
+                  <p className="form-hint" style={{ background: 'var(--warning-glow)', padding: '12px', borderRadius: '6px', color: 'var(--warning-color)' }}>
+                    Mistral API key is required. Set it in the <strong>AI Provider</strong> tab or enter it here:
+                  </p>
+                  <input
+                    type="password"
+                    className="form-input"
+                    value={settings.mistralApiKey}
+                    onChange={(e) => setSettings({ ...settings, mistralApiKey: e.target.value })}
+                    placeholder="Enter your Mistral API key"
+                    style={{ marginTop: '8px' }}
+                  />
+                </div>
+              )}
+
+              {/* Mistral Local: endpoint URL + setup guide */}
+              {settings.stt.sttProvider === 'mistral-local' && (
+                <div className="form-group">
+                  <label className="form-label">Voxtral Local Endpoint</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={settings.stt.localSttUrl}
+                    onChange={(e) =>
+                      setSettings({
+                        ...settings,
+                        stt: { ...settings.stt, localSttUrl: e.target.value },
+                      })
+                    }
+                    placeholder="http://localhost:8000"
+                  />
+                  <p className="form-hint">
+                    Posts to <code>{settings.stt.localSttUrl}/v1/audio/transcriptions</code>
+                  </p>
+                  <div style={{ background: 'var(--bg-tertiary)', padding: '10px 12px', borderRadius: '6px', marginTop: '8px', fontSize: '11px', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                    <strong style={{ color: 'var(--text-primary)' }}>Voxtral Mini 3B Setup:</strong><br />
+                    1. Install vLLM: <code>pip install vllm</code><br />
+                    2. Serve: <code>vllm serve mistralai/Voxtral-Mini-3B-2507 --port 8000</code><br />
+                    3. Or use GGUF with llama.cpp: <code>ggml-org/Voxtral-Mini-3B-2507-GGUF</code><br />
+                    <em>Requires GPU with ≥10GB VRAM (FP16) or ≥5GB (FP8 quantized)</em>
+                  </div>
+                </div>
+              )}
+
+              {/* Qwen Edge: endpoint URL + setup guide */}
+              {settings.stt.sttProvider === 'qwen-edge' && (
+                <div className="form-group">
+                  <label className="form-label">Qwen3-ASR Endpoint</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={settings.stt.qwenSttUrl || 'http://localhost:9000'}
+                    onChange={(e) =>
+                      setSettings({
+                        ...settings,
+                        stt: { ...settings.stt, qwenSttUrl: e.target.value },
+                      })
+                    }
+                    placeholder="http://localhost:9000"
+                  />
+                  <p className="form-hint">
+                    Tries <code>/v1/audio/transcriptions</code> then <code>/asr</code> endpoint.
+                  </p>
+                  <div style={{ background: 'var(--bg-tertiary)', padding: '10px 12px', borderRadius: '6px', marginTop: '8px', fontSize: '11px', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                    <strong style={{ color: 'var(--text-primary)' }}>Qwen3-ASR-0.6B Setup (C++ / GGUF):</strong><br />
+                    1. Clone: <code>git clone https://github.com/predict-woo/qwen3-asr.cpp</code><br />
+                    2. Build: <code>cmake -B build &amp;&amp; cmake --build build</code><br />
+                    3. Download model: <code>Q8_0 GGUF (~1.3GB)</code><br />
+                    4. Run server: <code>./build/bin/server -m model.gguf --port 9000</code><br />
+                    <br />
+                    <strong style={{ color: 'var(--text-primary)' }}>Or via Python (Transformers):</strong><br />
+                    <code>pip install transformers torch</code> then serve with a FastAPI wrapper.<br />
+                    <br />
+                    <em>Runs on CPU (~1.3GB RAM). No GPU required. 52 languages supported.</em>
+                  </div>
+                </div>
+              )}
+
+              {/* Transcription options */}
+              <div className="form-group">
+                <label className="form-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span>Word-level Timestamps</span>
+                  <button
+                    className={`toggle-switch ${settings.stt.sttTimestamps ? 'active' : ''}`}
+                    onClick={() =>
+                      setSettings({
+                        ...settings,
+                        stt: { ...settings.stt, sttTimestamps: !settings.stt.sttTimestamps },
+                      })
+                    }
+                  >
+                    <span className="toggle-slider" />
+                  </button>
+                </label>
+                <p className="form-hint">
+                  Include timestamps in the transcript output.
+                  {settings.stt.sttProvider === 'qwen-edge' && ' Qwen3-ASR uses the companion ForcedAligner model for timestamps.'}
+                </p>
+              </div>
+
+              {settings.stt.sttProvider !== 'qwen-edge' && (
+                <div className="form-group">
+                  <label className="form-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span>Speaker Diarization</span>
+                    <button
+                      className={`toggle-switch ${settings.stt.sttDiarize ? 'active' : ''}`}
+                      onClick={() =>
+                        setSettings({
+                          ...settings,
+                          stt: { ...settings.stt, sttDiarize: !settings.stt.sttDiarize },
+                        })
+                      }
+                    >
+                      <span className="toggle-slider" />
+                    </button>
+                  </label>
+                  <p className="form-hint">
+                    Identify and label different speakers. Available with Mistral Cloud (batch mode).
+                  </p>
+                </div>
+              )}
+
+              <div className="form-group">
+                <label className="form-label">Language</label>
+                <select
+                  className="form-select"
+                  value={settings.stt.sttLanguage}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      stt: { ...settings.stt, sttLanguage: e.target.value },
+                    })
+                  }
+                >
+                  <option value="">Auto-detect</option>
+                  <option value="en">English</option>
+                  <option value="de">German</option>
+                  <option value="fr">French</option>
+                  <option value="es">Spanish</option>
+                  <option value="it">Italian</option>
+                  <option value="pt">Portuguese</option>
+                  <option value="nl">Dutch</option>
+                  <option value="ru">Russian</option>
+                  <option value="zh">Chinese (Mandarin)</option>
+                  <option value="ja">Japanese</option>
+                  <option value="ko">Korean</option>
+                  <option value="ar">Arabic</option>
+                  <option value="hi">Hindi</option>
+                  {settings.stt.sttProvider === 'qwen-edge' && (
+                    <>
+                      <option value="th">Thai</option>
+                      <option value="vi">Vietnamese</option>
+                      <option value="id">Indonesian</option>
+                      <option value="ms">Malay</option>
+                      <option value="tr">Turkish</option>
+                      <option value="pl">Polish</option>
+                      <option value="uk">Ukrainian</option>
+                      <option value="cs">Czech</option>
+                      <option value="sv">Swedish</option>
+                      <option value="da">Danish</option>
+                      <option value="fi">Finnish</option>
+                      <option value="no">Norwegian</option>
+                      <option value="el">Greek</option>
+                      <option value="he">Hebrew</option>
+                      <option value="hu">Hungarian</option>
+                      <option value="ro">Romanian</option>
+                      <option value="bg">Bulgarian</option>
+                    </>
+                  )}
+                </select>
+                <p className="form-hint">
+                  {settings.stt.sttProvider === 'qwen-edge'
+                    ? 'Qwen3-ASR supports 52 languages including 22 Chinese dialects.'
+                    : 'Mistral Voxtral supports 13 languages.'}
+                </p>
+              </div>
+
+              <div className="form-group">
+                <button
+                  className="btn btn-secondary"
+                  onClick={async () => {
+                    setSttTestResult(null);
+                    const result = await window.api.stt.checkAvailable();
+                    setSttTestResult(result.available ? 'success' : 'error');
+                  }}
+                  style={{ width: '100%' }}
+                >
+                  Test Transcription Connection
+                </button>
+                {sttTestResult && (
+                  <p
+                    className="form-hint"
+                    style={{
+                      color: sttTestResult === 'success' ? 'var(--success-color)' : 'var(--error-color)',
+                      marginTop: '8px',
+                    }}
+                  >
+                    {sttTestResult === 'success'
+                      ? 'Transcription service is available!'
+                      : 'Cannot reach transcription service. Check your settings.'}
+                  </p>
+                )}
+              </div>
+
+              {/* Model comparison note */}
+              <div className="form-group">
+                <div style={{ background: 'var(--bg-tertiary)', padding: '12px', borderRadius: '6px', fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                  <strong style={{ color: 'var(--text-secondary)' }}>Edge Model Comparison</strong><br />
+                  <strong>Mistral Voxtral Mini 3B:</strong> ~3B params, ~5GB (FP8), 13 langs, timestamps + diarization, needs GPU<br />
+                  <strong>Qwen3-ASR-0.6B:</strong> ~0.6B params, ~1.3GB (Q8), 52 langs, timestamps via ForcedAligner, runs on CPU<br />
+                  <br />
+                  Voxtral is more accurate with richer features (diarization, context biasing).
+                  Qwen3-ASR is 5x smaller and runs on any hardware without a GPU.
+                </div>
               </div>
             </>
           )}

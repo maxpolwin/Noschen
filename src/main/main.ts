@@ -34,6 +34,15 @@ interface PromptConfig {
   feedbackTypes: FeedbackTypeConfig[];
 }
 
+interface SttSettings {
+  sttProvider: 'mistral-cloud' | 'mistral-local' | 'qwen-edge';
+  localSttUrl: string;
+  qwenSttUrl: string;
+  sttTimestamps: boolean;
+  sttDiarize: boolean;
+  sttLanguage: string;
+}
+
 interface AISettings {
   provider: 'builtin' | 'ollama' | 'mistral';
   ollamaModel: string;
@@ -46,6 +55,7 @@ interface AISettings {
   llmMaxTokens: number;
   llmBatchSize: number;
   promptConfig: PromptConfig;
+  stt: SttSettings;
 }
 
 // Default feedback types
@@ -124,6 +134,14 @@ function getDefaultSettings(): AISettings {
     promptConfig: {
       systemPrompt: DEFAULT_SYSTEM_PROMPT,
       feedbackTypes: DEFAULT_FEEDBACK_TYPES,
+    },
+    stt: {
+      sttProvider: 'mistral-cloud',
+      localSttUrl: 'http://localhost:8000',
+      qwenSttUrl: 'http://localhost:9000',
+      sttTimestamps: true,
+      sttDiarize: false,
+      sttLanguage: '',
     },
   };
 }
@@ -745,6 +763,296 @@ ipcMain.handle('ai:getStatus', async () => {
     localLLM: status,
     modelPath: settings.provider === 'builtin' ? 'qwen2.5-0.5b-instruct-q4_k_m.gguf' : null,
   };
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SPEECH-TO-TEXT (Transcription via Mistral Voxtral)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Get MIME type from file extension
+function getAudioMimeType(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+  const mimeTypes: Record<string, string> = {
+    '.mp3': 'audio/mpeg',
+    '.wav': 'audio/wav',
+    '.wave': 'audio/wav',
+    '.m4a': 'audio/mp4',
+    '.flac': 'audio/flac',
+    '.ogg': 'audio/ogg',
+    '.opus': 'audio/opus',
+    '.wma': 'audio/x-ms-wma',
+    '.aac': 'audio/aac',
+    '.webm': 'audio/webm',
+  };
+  return mimeTypes[ext] || 'audio/mpeg';
+}
+
+// Format seconds as MM:SS or HH:MM:SS
+function formatTimestamp(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  if (h > 0) {
+    return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+interface TranscriptionResult {
+  text: string;
+  words?: { word: string; start: number; end: number }[];
+  segments?: { start: number; end: number; text: string; speaker?: string }[];
+  duration?: number;
+  error?: string;
+}
+
+// Transcribe via Mistral API (cloud or local Voxtral endpoint)
+async function transcribeMistral(
+  filePath: string,
+  apiUrl: string,
+  apiKey: string,
+  stt: SttSettings
+): Promise<TranscriptionResult> {
+  const fileBuffer = fs.readFileSync(filePath);
+  const mimeType = getAudioMimeType(filePath);
+  const fileName = path.basename(filePath);
+
+  const blob = new Blob([fileBuffer], { type: mimeType });
+  const formData = new FormData();
+  formData.append('file', blob, fileName);
+  formData.append('model', 'voxtral-mini-latest');
+
+  if (stt.sttTimestamps) {
+    formData.append('timestamp_granularities', JSON.stringify(['word', 'segment']));
+  }
+  if (stt.sttDiarize) {
+    formData.append('diarize', 'true');
+  }
+  if (stt.sttLanguage) {
+    formData.append('language', stt.sttLanguage);
+  }
+
+  const headers: Record<string, string> = {};
+  if (apiKey) {
+    headers['Authorization'] = `Bearer ${apiKey}`;
+  }
+
+  const response = await fetch(apiUrl, {
+    method: 'POST',
+    headers,
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => 'Unknown error');
+    throw new Error(`Mistral API error (${response.status}): ${errorText}`);
+  }
+
+  const data = await response.json() as TranscriptionResult;
+  return {
+    text: data.text || '',
+    words: data.words,
+    segments: data.segments,
+    duration: data.duration,
+  };
+}
+
+// Transcribe via Qwen3-ASR edge server (qwen3-asr.cpp or custom wrapper)
+// Qwen3-ASR servers typically expose a simpler REST API:
+//   POST /asr  with multipart file upload
+//   Returns: { text, segments?, duration? }
+// Also supports OpenAI-compatible /v1/audio/transcriptions if wrapped
+async function transcribeQwen(
+  filePath: string,
+  baseUrl: string,
+  stt: SttSettings
+): Promise<TranscriptionResult> {
+  const fileBuffer = fs.readFileSync(filePath);
+  const mimeType = getAudioMimeType(filePath);
+  const fileName = path.basename(filePath);
+
+  const blob = new Blob([fileBuffer], { type: mimeType });
+  const formData = new FormData();
+  formData.append('file', blob, fileName);
+
+  if (stt.sttLanguage) {
+    formData.append('language', stt.sttLanguage);
+  }
+  if (stt.sttTimestamps) {
+    formData.append('timestamps', 'true');
+  }
+
+  // Try OpenAI-compatible endpoint first, fall back to /asr
+  const endpoints = [
+    `${baseUrl}/v1/audio/transcriptions`,
+    `${baseUrl}/asr`,
+  ];
+
+  let lastError = '';
+  for (const endpoint of endpoints) {
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        lastError = `Qwen API error (${response.status}): ${await response.text().catch(() => 'Unknown')}`;
+        continue;
+      }
+
+      const data = await response.json() as any;
+
+      // Normalize response format (Qwen servers may return different shapes)
+      const text = data.text || data.transcription || data.result || '';
+      const segments = data.segments || data.utterances || undefined;
+      const duration = data.duration || undefined;
+
+      return { text, segments, duration };
+    } catch (e) {
+      lastError = e instanceof Error ? e.message : 'Connection failed';
+      continue;
+    }
+  }
+
+  throw new Error(lastError || `Cannot reach Qwen STT server at ${baseUrl}`);
+}
+
+ipcMain.handle('stt:transcribe', async (_, filePath: string): Promise<TranscriptionResult> => {
+  const settings = loadSettings();
+  const stt = settings.stt || getDefaultSettings().stt;
+
+  // Validate file exists
+  if (!fs.existsSync(filePath)) {
+    return { text: '', error: `File not found: ${filePath}` };
+  }
+
+  try {
+    console.log(`[STT] Transcribing ${path.basename(filePath)} via ${stt.sttProvider}...`);
+
+    let result: TranscriptionResult;
+
+    if (stt.sttProvider === 'mistral-cloud') {
+      if (!settings.mistralApiKey) {
+        return { text: '', error: 'Mistral API key not configured. Go to Settings > AI Provider to add your key.' };
+      }
+      result = await transcribeMistral(
+        filePath,
+        'https://api.mistral.ai/v1/audio/transcriptions',
+        settings.mistralApiKey,
+        stt
+      );
+    } else if (stt.sttProvider === 'mistral-local') {
+      const baseUrl = stt.localSttUrl.replace(/\/$/, '');
+      result = await transcribeMistral(
+        filePath,
+        `${baseUrl}/v1/audio/transcriptions`,
+        settings.mistralApiKey, // Optional for local
+        stt
+      );
+    } else {
+      // qwen-edge: Qwen3-ASR-0.6B local server
+      const baseUrl = (stt.qwenSttUrl || 'http://localhost:9000').replace(/\/$/, '');
+      result = await transcribeQwen(filePath, baseUrl, stt);
+    }
+
+    console.log(`[STT] Transcription complete: ${result.text?.length || 0} chars`);
+    return result;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown transcription error';
+    console.error('[STT] Transcription error:', errorMessage);
+    return { text: '', error: errorMessage };
+  }
+});
+
+// Format transcription result as HTML for insertion into the editor
+ipcMain.handle('stt:formatTranscript', async (_, result: TranscriptionResult, fileName: string): Promise<string> => {
+  const settings = loadSettings();
+  const stt = settings.stt || getDefaultSettings().stt;
+
+  let html = '';
+
+  // Header
+  html += `<h3>Transcript: ${fileName.replace(/\.[^/.]+$/, '')}</h3>`;
+
+  // If we have segments with speakers (diarization enabled)
+  if (stt.sttDiarize && result.segments && result.segments.some(s => s.speaker)) {
+    for (const segment of result.segments) {
+      const timestamp = formatTimestamp(segment.start);
+      const speaker = segment.speaker || 'Speaker';
+      html += `<p><strong>[${timestamp}] ${speaker}:</strong> ${segment.text}</p>`;
+    }
+  }
+  // If we have segments with timestamps (no diarization)
+  else if (stt.sttTimestamps && result.segments && result.segments.length > 0) {
+    for (const segment of result.segments) {
+      const timestamp = formatTimestamp(segment.start);
+      html += `<p><strong>[${timestamp}]</strong> ${segment.text}</p>`;
+    }
+  }
+  // Plain text fallback
+  else {
+    // Split into paragraphs at natural breaks
+    const paragraphs = result.text.split(/\n+/).filter(p => p.trim());
+    for (const para of paragraphs) {
+      html += `<p>${para}</p>`;
+    }
+    if (paragraphs.length === 0) {
+      html += `<p>${result.text}</p>`;
+    }
+  }
+
+  // Duration info
+  if (result.duration) {
+    html += `<p><em>Duration: ${formatTimestamp(result.duration)}</em></p>`;
+  }
+
+  return html;
+});
+
+// Check if STT is configured and available
+ipcMain.handle('stt:checkAvailable', async (): Promise<{ available: boolean; error?: string }> => {
+  const settings = loadSettings();
+  const stt = settings.stt || getDefaultSettings().stt;
+
+  if (stt.sttProvider === 'mistral-cloud') {
+    if (!settings.mistralApiKey) {
+      return { available: false, error: 'Mistral API key not configured' };
+    }
+    return { available: true };
+  } else if (stt.sttProvider === 'mistral-local') {
+    try {
+      const baseUrl = stt.localSttUrl.replace(/\/$/, '');
+      const response = await fetch(`${baseUrl}/v1/models`, {
+        method: 'GET',
+        signal: AbortSignal.timeout(5000),
+      });
+      return { available: response.ok };
+    } catch {
+      return { available: false, error: `Cannot reach local Voxtral endpoint at ${stt.localSttUrl}` };
+    }
+  } else {
+    // qwen-edge: try to reach the Qwen3-ASR server
+    const baseUrl = (stt.qwenSttUrl || 'http://localhost:9000').replace(/\/$/, '');
+    try {
+      // Try /health, /v1/models, or just a GET to the base URL
+      const endpoints = [`${baseUrl}/health`, `${baseUrl}/v1/models`, baseUrl];
+      for (const endpoint of endpoints) {
+        try {
+          const response = await fetch(endpoint, {
+            method: 'GET',
+            signal: AbortSignal.timeout(3000),
+          });
+          if (response.ok) return { available: true };
+        } catch {
+          continue;
+        }
+      }
+      return { available: false, error: `Cannot reach Qwen3-ASR server at ${baseUrl}` };
+    } catch {
+      return { available: false, error: `Cannot reach Qwen3-ASR server at ${baseUrl}` };
+    }
+  }
 });
 
 // Cleanup on app quit
