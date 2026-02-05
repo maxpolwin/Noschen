@@ -35,8 +35,9 @@ interface PromptConfig {
 }
 
 interface SttSettings {
-  sttProvider: 'mistral-cloud' | 'mistral-local';
+  sttProvider: 'mistral-cloud' | 'mistral-local' | 'qwen-edge';
   localSttUrl: string;
+  qwenSttUrl: string;
   sttTimestamps: boolean;
   sttDiarize: boolean;
   sttLanguage: string;
@@ -137,6 +138,7 @@ function getDefaultSettings(): AISettings {
     stt: {
       sttProvider: 'mistral-cloud',
       localSttUrl: 'http://localhost:8000',
+      qwenSttUrl: 'http://localhost:9000',
       sttTimestamps: true,
       sttDiarize: false,
       sttLanguage: '',
@@ -804,6 +806,118 @@ interface TranscriptionResult {
   error?: string;
 }
 
+// Transcribe via Mistral API (cloud or local Voxtral endpoint)
+async function transcribeMistral(
+  filePath: string,
+  apiUrl: string,
+  apiKey: string,
+  stt: SttSettings
+): Promise<TranscriptionResult> {
+  const fileBuffer = fs.readFileSync(filePath);
+  const mimeType = getAudioMimeType(filePath);
+  const fileName = path.basename(filePath);
+
+  const blob = new Blob([fileBuffer], { type: mimeType });
+  const formData = new FormData();
+  formData.append('file', blob, fileName);
+  formData.append('model', 'voxtral-mini-latest');
+
+  if (stt.sttTimestamps) {
+    formData.append('timestamp_granularities', JSON.stringify(['word', 'segment']));
+  }
+  if (stt.sttDiarize) {
+    formData.append('diarize', 'true');
+  }
+  if (stt.sttLanguage) {
+    formData.append('language', stt.sttLanguage);
+  }
+
+  const headers: Record<string, string> = {};
+  if (apiKey) {
+    headers['Authorization'] = `Bearer ${apiKey}`;
+  }
+
+  const response = await fetch(apiUrl, {
+    method: 'POST',
+    headers,
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => 'Unknown error');
+    throw new Error(`Mistral API error (${response.status}): ${errorText}`);
+  }
+
+  const data = await response.json() as TranscriptionResult;
+  return {
+    text: data.text || '',
+    words: data.words,
+    segments: data.segments,
+    duration: data.duration,
+  };
+}
+
+// Transcribe via Qwen3-ASR edge server (qwen3-asr.cpp or custom wrapper)
+// Qwen3-ASR servers typically expose a simpler REST API:
+//   POST /asr  with multipart file upload
+//   Returns: { text, segments?, duration? }
+// Also supports OpenAI-compatible /v1/audio/transcriptions if wrapped
+async function transcribeQwen(
+  filePath: string,
+  baseUrl: string,
+  stt: SttSettings
+): Promise<TranscriptionResult> {
+  const fileBuffer = fs.readFileSync(filePath);
+  const mimeType = getAudioMimeType(filePath);
+  const fileName = path.basename(filePath);
+
+  const blob = new Blob([fileBuffer], { type: mimeType });
+  const formData = new FormData();
+  formData.append('file', blob, fileName);
+
+  if (stt.sttLanguage) {
+    formData.append('language', stt.sttLanguage);
+  }
+  if (stt.sttTimestamps) {
+    formData.append('timestamps', 'true');
+  }
+
+  // Try OpenAI-compatible endpoint first, fall back to /asr
+  const endpoints = [
+    `${baseUrl}/v1/audio/transcriptions`,
+    `${baseUrl}/asr`,
+  ];
+
+  let lastError = '';
+  for (const endpoint of endpoints) {
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        lastError = `Qwen API error (${response.status}): ${await response.text().catch(() => 'Unknown')}`;
+        continue;
+      }
+
+      const data = await response.json() as any;
+
+      // Normalize response format (Qwen servers may return different shapes)
+      const text = data.text || data.transcription || data.result || '';
+      const segments = data.segments || data.utterances || undefined;
+      const duration = data.duration || undefined;
+
+      return { text, segments, duration };
+    } catch (e) {
+      lastError = e instanceof Error ? e.message : 'Connection failed';
+      continue;
+    }
+  }
+
+  throw new Error(lastError || `Cannot reach Qwen STT server at ${baseUrl}`);
+}
+
 ipcMain.handle('stt:transcribe', async (_, filePath: string): Promise<TranscriptionResult> => {
   const settings = loadSettings();
   const stt = settings.stt || getDefaultSettings().stt;
@@ -813,78 +927,37 @@ ipcMain.handle('stt:transcribe', async (_, filePath: string): Promise<Transcript
     return { text: '', error: `File not found: ${filePath}` };
   }
 
-  // Determine API endpoint and key
-  let apiUrl: string;
-  let apiKey: string;
-
-  if (stt.sttProvider === 'mistral-cloud') {
-    apiUrl = 'https://api.mistral.ai/v1/audio/transcriptions';
-    apiKey = settings.mistralApiKey;
-    if (!apiKey) {
-      return { text: '', error: 'Mistral API key not configured. Go to Settings > AI Provider to add your key.' };
-    }
-  } else {
-    // mistral-local: self-hosted Voxtral endpoint
-    const baseUrl = stt.localSttUrl.replace(/\/$/, '');
-    apiUrl = `${baseUrl}/v1/audio/transcriptions`;
-    apiKey = settings.mistralApiKey; // Optional for local, but include if set
-  }
-
   try {
     console.log(`[STT] Transcribing ${path.basename(filePath)} via ${stt.sttProvider}...`);
 
-    // Read the audio file
-    const fileBuffer = fs.readFileSync(filePath);
-    const mimeType = getAudioMimeType(filePath);
-    const fileName = path.basename(filePath);
+    let result: TranscriptionResult;
 
-    // Build multipart form data
-    const blob = new Blob([fileBuffer], { type: mimeType });
-    const formData = new FormData();
-    formData.append('file', blob, fileName);
-    formData.append('model', 'voxtral-mini-latest');
-
-    // Add optional parameters
-    if (stt.sttTimestamps) {
-      formData.append('timestamp_granularities', JSON.stringify(['word', 'segment']));
-    }
-    if (stt.sttDiarize) {
-      formData.append('diarize', 'true');
-    }
-    if (stt.sttLanguage) {
-      formData.append('language', stt.sttLanguage);
-    }
-
-    // Make the API request
-    const headers: Record<string, string> = {};
-    if (apiKey) {
-      headers['Authorization'] = `Bearer ${apiKey}`;
+    if (stt.sttProvider === 'mistral-cloud') {
+      if (!settings.mistralApiKey) {
+        return { text: '', error: 'Mistral API key not configured. Go to Settings > AI Provider to add your key.' };
+      }
+      result = await transcribeMistral(
+        filePath,
+        'https://api.mistral.ai/v1/audio/transcriptions',
+        settings.mistralApiKey,
+        stt
+      );
+    } else if (stt.sttProvider === 'mistral-local') {
+      const baseUrl = stt.localSttUrl.replace(/\/$/, '');
+      result = await transcribeMistral(
+        filePath,
+        `${baseUrl}/v1/audio/transcriptions`,
+        settings.mistralApiKey, // Optional for local
+        stt
+      );
+    } else {
+      // qwen-edge: Qwen3-ASR-0.6B local server
+      const baseUrl = (stt.qwenSttUrl || 'http://localhost:9000').replace(/\/$/, '');
+      result = await transcribeQwen(filePath, baseUrl, stt);
     }
 
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers,
-      body: formData,
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => 'Unknown error');
-      console.error(`[STT] API error ${response.status}:`, errorText);
-      return {
-        text: '',
-        error: `Transcription failed (${response.status}): ${errorText}`,
-      };
-    }
-
-    const data = await response.json() as TranscriptionResult;
-    console.log(`[STT] Transcription complete: ${data.text?.length || 0} chars`);
-
-    return {
-      text: data.text || '',
-      words: data.words,
-      segments: data.segments,
-      duration: data.duration,
-    };
+    console.log(`[STT] Transcription complete: ${result.text?.length || 0} chars`);
+    return result;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown transcription error';
     console.error('[STT] Transcription error:', errorMessage);
@@ -947,8 +1020,7 @@ ipcMain.handle('stt:checkAvailable', async (): Promise<{ available: boolean; err
       return { available: false, error: 'Mistral API key not configured' };
     }
     return { available: true };
-  } else {
-    // Check if local endpoint is reachable
+  } else if (stt.sttProvider === 'mistral-local') {
     try {
       const baseUrl = stt.localSttUrl.replace(/\/$/, '');
       const response = await fetch(`${baseUrl}/v1/models`, {
@@ -957,7 +1029,28 @@ ipcMain.handle('stt:checkAvailable', async (): Promise<{ available: boolean; err
       });
       return { available: response.ok };
     } catch {
-      return { available: false, error: `Cannot reach local STT endpoint at ${stt.localSttUrl}` };
+      return { available: false, error: `Cannot reach local Voxtral endpoint at ${stt.localSttUrl}` };
+    }
+  } else {
+    // qwen-edge: try to reach the Qwen3-ASR server
+    const baseUrl = (stt.qwenSttUrl || 'http://localhost:9000').replace(/\/$/, '');
+    try {
+      // Try /health, /v1/models, or just a GET to the base URL
+      const endpoints = [`${baseUrl}/health`, `${baseUrl}/v1/models`, baseUrl];
+      for (const endpoint of endpoints) {
+        try {
+          const response = await fetch(endpoint, {
+            method: 'GET',
+            signal: AbortSignal.timeout(3000),
+          });
+          if (response.ok) return { available: true };
+        } catch {
+          continue;
+        }
+      }
+      return { available: false, error: `Cannot reach Qwen3-ASR server at ${baseUrl}` };
+    } catch {
+      return { available: false, error: `Cannot reach Qwen3-ASR server at ${baseUrl}` };
     }
   }
 });

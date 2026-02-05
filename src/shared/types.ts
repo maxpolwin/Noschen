@@ -11,13 +11,14 @@ export interface Note {
 // SPEECH-TO-TEXT (Transcription)
 // ═══════════════════════════════════════════════════════════════════════════
 
-export type SttProvider = 'mistral-cloud' | 'mistral-local';
+export type SttProvider = 'mistral-cloud' | 'mistral-local' | 'qwen-edge';
 
 export interface SttSettings {
   sttProvider: SttProvider;
   localSttUrl: string;          // For local/on-prem Voxtral endpoint (e.g. http://localhost:8000)
+  qwenSttUrl: string;           // For local Qwen3-ASR edge endpoint (e.g. http://localhost:9000)
   sttTimestamps: boolean;       // Include word-level timestamps
-  sttDiarize: boolean;          // Enable speaker diarization
+  sttDiarize: boolean;          // Enable speaker diarization (Mistral only)
   sttLanguage: string;          // Language code (e.g. 'en', 'de', 'fr') or empty for auto-detect
 }
 

@@ -23,8 +23,9 @@ interface PromptConfig {
 }
 
 interface SttSettings {
-  sttProvider: 'mistral-cloud' | 'mistral-local';
+  sttProvider: 'mistral-cloud' | 'mistral-local' | 'qwen-edge';
   localSttUrl: string;
+  qwenSttUrl: string;
   sttTimestamps: boolean;
   sttDiarize: boolean;
   sttLanguage: string;
