@@ -424,14 +424,17 @@ function Editor({
 
     try {
       for (const file of pendingAudioFiles) {
-        // Read file as base64 string for safe IPC transfer (avoids "Invalid array length")
-        const arrayBuffer = await file.arrayBuffer();
-        const bytes = new Uint8Array(arrayBuffer);
-        let binary = '';
-        for (let i = 0; i < bytes.length; i++) {
-          binary += String.fromCharCode(bytes[i]);
-        }
-        const base64 = btoa(binary);
+        // Read file as base64 using FileReader (handles large files without "Invalid array length")
+        const base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const dataUrl = reader.result as string;
+            // Strip the "data:audio/...;base64," prefix to get raw base64
+            resolve(dataUrl.split(',')[1]);
+          };
+          reader.onerror = () => reject(new Error('Failed to read audio file'));
+          reader.readAsDataURL(file);
+        });
 
         // Transcribe the audio file with selected language override
         const result = await window.api.stt.transcribe(base64, file.name, language);
