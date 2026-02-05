@@ -3,8 +3,43 @@ import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
 import Heading from '@tiptap/extension-heading';
-import { Trash2, Eye, EyeOff, Mic, Loader2, AlertCircle } from 'lucide-react';
+import { Trash2, Eye, EyeOff, Mic, Loader2, AlertCircle, Globe } from 'lucide-react';
 import { Note, FeedbackItem, SUPPORTED_AUDIO_EXTENSIONS } from '../../shared/types';
+
+// Comprehensive language list for audio transcription
+const TRANSCRIPTION_LANGUAGES = [
+  { code: '', label: 'Auto-detect' },
+  { code: 'en', label: 'English' },
+  { code: 'de', label: 'German' },
+  { code: 'fr', label: 'French' },
+  { code: 'es', label: 'Spanish' },
+  { code: 'it', label: 'Italian' },
+  { code: 'pt', label: 'Portuguese' },
+  { code: 'nl', label: 'Dutch' },
+  { code: 'ru', label: 'Russian' },
+  { code: 'zh', label: 'Chinese (Mandarin)' },
+  { code: 'ja', label: 'Japanese' },
+  { code: 'ko', label: 'Korean' },
+  { code: 'ar', label: 'Arabic' },
+  { code: 'hi', label: 'Hindi' },
+  { code: 'th', label: 'Thai' },
+  { code: 'vi', label: 'Vietnamese' },
+  { code: 'id', label: 'Indonesian' },
+  { code: 'ms', label: 'Malay' },
+  { code: 'tr', label: 'Turkish' },
+  { code: 'pl', label: 'Polish' },
+  { code: 'uk', label: 'Ukrainian' },
+  { code: 'cs', label: 'Czech' },
+  { code: 'sv', label: 'Swedish' },
+  { code: 'da', label: 'Danish' },
+  { code: 'fi', label: 'Finnish' },
+  { code: 'no', label: 'Norwegian' },
+  { code: 'el', label: 'Greek' },
+  { code: 'he', label: 'Hebrew' },
+  { code: 'hu', label: 'Hungarian' },
+  { code: 'ro', label: 'Romanian' },
+  { code: 'bg', label: 'Bulgarian' },
+];
 import FeedbackPanel from './FeedbackPanel';
 
 interface EditorProps {
@@ -64,6 +99,11 @@ function Editor({
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [transcriptionError, setTranscriptionError] = useState<string | null>(null);
   const dragCounterRef = useRef(0);
+
+  // Language picker state (shown before transcription)
+  const [showLanguagePicker, setShowLanguagePicker] = useState(false);
+  const [selectedLanguage, setSelectedLanguage] = useState('');
+  const [pendingAudioFiles, setPendingAudioFiles] = useState<File[]>([]);
 
   const editor = useEditor({
     extensions: [
@@ -368,12 +408,22 @@ function Editor({
 
     if (audioFiles.length === 0) return;
 
-    // Clear any previous error
+    // Show language picker before starting transcription
+    setPendingAudioFiles(audioFiles);
+    setSelectedLanguage(''); // default to auto-detect
+    setShowLanguagePicker(true);
+  }, [editor, isAudioFile]);
+
+  // Start transcription after language is selected
+  const startTranscription = useCallback(async (language: string) => {
+    if (!editor || pendingAudioFiles.length === 0) return;
+
+    setShowLanguagePicker(false);
     setTranscriptionError(null);
     setIsTranscribing(true);
 
     try {
-      for (const file of audioFiles) {
+      for (const file of pendingAudioFiles) {
         // Read file as base64 string for safe IPC transfer (avoids "Invalid array length")
         const arrayBuffer = await file.arrayBuffer();
         const bytes = new Uint8Array(arrayBuffer);
@@ -383,8 +433,8 @@ function Editor({
         }
         const base64 = btoa(binary);
 
-        // Transcribe the audio file (send base64 + name to main process)
-        const result = await window.api.stt.transcribe(base64, file.name);
+        // Transcribe the audio file with selected language override
+        const result = await window.api.stt.transcribe(base64, file.name, language);
 
         if (result.error) {
           setTranscriptionError(result.error);
@@ -407,8 +457,9 @@ function Editor({
       setTranscriptionError(msg);
     } finally {
       setIsTranscribing(false);
+      setPendingAudioFiles([]);
     }
-  }, [editor, isAudioFile]);
+  }, [editor, pendingAudioFiles]);
 
   // Auto-dismiss transcription error after 8 seconds
   useEffect(() => {
@@ -477,6 +528,47 @@ function Editor({
           <div className="transcription-progress">
             <Loader2 size={16} className="spin" />
             <span>Transcribing audio...</span>
+          </div>
+        )}
+
+        {/* Language picker modal */}
+        {showLanguagePicker && (
+          <div className="language-picker-overlay" onClick={() => { setShowLanguagePicker(false); setPendingAudioFiles([]); }}>
+            <div className="language-picker-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="language-picker-header">
+                <Globe size={18} />
+                <span>Select Audio Language</span>
+              </div>
+              <p className="language-picker-hint">
+                {pendingAudioFiles.length === 1
+                  ? pendingAudioFiles[0].name
+                  : `${pendingAudioFiles.length} audio files`}
+              </p>
+              <select
+                className="language-picker-select"
+                value={selectedLanguage}
+                onChange={(e) => setSelectedLanguage(e.target.value)}
+                autoFocus
+              >
+                {TRANSCRIPTION_LANGUAGES.map((lang) => (
+                  <option key={lang.code} value={lang.code}>{lang.label}</option>
+                ))}
+              </select>
+              <div className="language-picker-actions">
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => { setShowLanguagePicker(false); setPendingAudioFiles([]); }}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="btn btn-primary"
+                  onClick={() => startTranscription(selectedLanguage)}
+                >
+                  Transcribe
+                </button>
+              </div>
+            </div>
           </div>
         )}
 

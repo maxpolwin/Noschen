@@ -30,7 +30,7 @@ declare global {
         getCurrentLanguages: () => Promise<string[]>;
       };
       stt: {
-        transcribe: (fileBase64: string, fileName: string) => Promise<TranscriptionResult>;
+        transcribe: (fileBase64: string, fileName: string, languageOverride?: string) => Promise<TranscriptionResult>;
         formatTranscript: (result: TranscriptionResult, fileName: string) => Promise<string>;
         checkAvailable: () => Promise<{ available: boolean; error?: string }>;
       };

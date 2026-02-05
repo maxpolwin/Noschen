@@ -933,9 +933,14 @@ async function transcribeQwen(
   throw new Error(lastError || `Cannot reach Qwen STT server at ${baseUrl}`);
 }
 
-ipcMain.handle('stt:transcribe', async (_, fileBase64: string, fileName: string): Promise<TranscriptionResult> => {
+ipcMain.handle('stt:transcribe', async (_, fileBase64: string, fileName: string, languageOverride?: string): Promise<TranscriptionResult> => {
   const settings = loadSettings();
-  const stt = settings.stt || getDefaultSettings().stt;
+  const stt = { ...(settings.stt || getDefaultSettings().stt) };
+
+  // Apply per-file language override if provided (empty string means auto-detect)
+  if (languageOverride !== undefined) {
+    stt.sttLanguage = languageOverride;
+  }
 
   if (!fileBase64 || fileBase64.length === 0) {
     sttLog('ERROR', 'No audio data received');
