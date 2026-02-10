@@ -87,15 +87,50 @@ function getNodeLlamaCppImportPath(): string {
 
 // In the packaged app, node-llama-cpp is loaded from app.asar.unpacked so
 // native binaries resolve correctly. But its JS dependencies (fs-extra,
-// universalify, etc.) remain inside the asar. Add the asar's node_modules
-// as a fallback module resolution path so require() can still find them.
+// universalify, etc.) remain inside the asar and can't be found by the
+// standard resolution algorithm. Patch Module._resolveFilename to fall back
+// to the asar's node_modules when a require() from the unpacked dir fails.
+let asarResolutionPatched = false;
 function ensureAsarModuleResolution(): void {
-  if (!app.isPackaged) return;
-  const asarNodeModules = path.join(process.resourcesPath, 'app.asar', 'node_modules');
+  if (!app.isPackaged || asarResolutionPatched) return;
+  asarResolutionPatched = true;
+
   const Module = require('module');
-  if (!Module.globalPaths.includes(asarNodeModules)) {
-    Module.globalPaths.push(asarNodeModules);
-  }
+  const originalResolveFilename = Module._resolveFilename;
+
+  Module._resolveFilename = function (
+    request: string,
+    parent: { filename?: string; paths?: string[] } | null,
+    isMain: boolean,
+    options?: Record<string, unknown>
+  ): string {
+    try {
+      return originalResolveFilename.call(this, request, parent, isMain, options);
+    } catch (err: unknown) {
+      // Only intercept MODULE_NOT_FOUND from the unpacked directory
+      if (
+        err instanceof Error &&
+        (err as NodeJS.ErrnoException).code === 'MODULE_NOT_FOUND' &&
+        parent?.filename?.includes('app.asar.unpacked')
+      ) {
+        // Retry resolution with paths mapped back into the asar
+        const asarPaths = (parent.paths || []).map((p: string) =>
+          p.replace(/app\.asar\.unpacked/g, 'app.asar')
+        );
+        if (asarPaths.length > 0) {
+          try {
+            return originalResolveFilename.call(this, request, parent, isMain, {
+              ...((options as object) || {}),
+              paths: asarPaths,
+            });
+          } catch {
+            // Fall through to original error
+          }
+        }
+      }
+      throw err;
+    }
+  };
 }
 
 export async function checkLocalLLMAvailable(): Promise<{ available: boolean; error?: string }> {
