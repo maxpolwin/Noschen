@@ -16,7 +16,7 @@
     "generate-icon": "bash scripts/generate-icon.sh"
   },
   "overrides": {
-    "tar": "^7.5.6",
+    "tar": ">=7.5.7",
     "glob": "^10.0.0",
     "axios": ">=1.13.5"
   },
