@@ -85,6 +85,19 @@ function getNodeLlamaCppImportPath(): string {
   return `file://${unpackedEntry}`;
 }
 
+// In the packaged app, node-llama-cpp is loaded from app.asar.unpacked so
+// native binaries resolve correctly. But its JS dependencies (fs-extra,
+// universalify, etc.) remain inside the asar. Add the asar's node_modules
+// as a fallback module resolution path so require() can still find them.
+function ensureAsarModuleResolution(): void {
+  if (!app.isPackaged) return;
+  const asarNodeModules = path.join(process.resourcesPath, 'app.asar', 'node_modules');
+  const Module = require('module');
+  if (!Module.globalPaths.includes(asarNodeModules)) {
+    Module.globalPaths.push(asarNodeModules);
+  }
+}
+
 export async function checkLocalLLMAvailable(): Promise<{ available: boolean; error?: string }> {
   const modelPath = getModelPath();
 
@@ -139,6 +152,7 @@ export async function initializeLocalLLM(): Promise<{ success: boolean; error?: 
 
     // Dynamic import for ESM module (using dynamicImport to bypass CommonJS transformation)
     if (!llamaModule) {
+      ensureAsarModuleResolution();
       const importPath = getNodeLlamaCppImportPath();
       console.log('[LocalLLM] Loading node-llama-cpp module from:', importPath);
       llamaModule = await dynamicImport(importPath);
