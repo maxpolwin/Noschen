@@ -66,6 +66,25 @@ function getModelPath(): string {
   }
 }
 
+// Get the import path for node-llama-cpp.
+// In packaged apps, ESM import() from inside the asar can't resolve native
+// binaries in @node-llama-cpp/* packages. Import from the unpacked directory
+// so all internal imports also resolve from outside the asar.
+function getNodeLlamaCppImportPath(): string {
+  if (!app.isPackaged) {
+    return 'node-llama-cpp';
+  }
+  const unpackedEntry = path.join(
+    process.resourcesPath,
+    'app.asar.unpacked',
+    'node_modules',
+    'node-llama-cpp',
+    'dist',
+    'index.js'
+  );
+  return `file://${unpackedEntry}`;
+}
+
 export async function checkLocalLLMAvailable(): Promise<{ available: boolean; error?: string }> {
   const modelPath = getModelPath();
 
@@ -120,8 +139,9 @@ export async function initializeLocalLLM(): Promise<{ success: boolean; error?: 
 
     // Dynamic import for ESM module (using dynamicImport to bypass CommonJS transformation)
     if (!llamaModule) {
-      console.log('[LocalLLM] Loading node-llama-cpp module...');
-      llamaModule = await dynamicImport('node-llama-cpp');
+      const importPath = getNodeLlamaCppImportPath();
+      console.log('[LocalLLM] Loading node-llama-cpp module from:', importPath);
+      llamaModule = await dynamicImport(importPath);
     }
 
     const { getLlama } = llamaModule;
