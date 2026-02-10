@@ -34,6 +34,9 @@ declare global {
         formatTranscript: (result: TranscriptionResult, fileName: string) => Promise<string>;
         checkAvailable: () => Promise<{ available: boolean; error?: string }>;
       };
+      security: {
+        isEncryptionAvailable: () => Promise<boolean>;
+      };
     };
   }
 }

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { X, Languages, Check, Plus, Trash2, RotateCcw, MessageSquare, ChevronDown, ChevronRight, Mic } from 'lucide-react';
+import { X, Languages, Check, Plus, Trash2, RotateCcw, MessageSquare, ChevronDown, ChevronRight, Mic, Shield, ShieldAlert } from 'lucide-react';
 import { AISettings, SpellcheckLanguage, FeedbackTypeConfig, DEFAULT_FEEDBACK_TYPES, DEFAULT_SYSTEM_PROMPT, FeedbackCategory, FEEDBACK_CATEGORY_LABELS, FeedbackTypeConfigWithCategory, SttSettings } from '../../shared/types';
 
 interface SettingsModalProps {
@@ -38,10 +38,12 @@ function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
   const [sttTestResult, setSttTestResult] = useState<'success' | 'error' | null>(null);
   const [availableLanguages, setAvailableLanguages] = useState<SpellcheckLanguage[]>([]);
   const [activeTab, setActiveTab] = useState<'ai' | 'editor' | 'prompts' | 'transcription'>('ai');
+  const [encryptionAvailable, setEncryptionAvailable] = useState<boolean | null>(null);
 
   useEffect(() => {
     loadSettings();
     loadAvailableLanguages();
+    loadEncryptionStatus();
   }, []);
 
   const loadSettings = async () => {
@@ -73,6 +75,11 @@ function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
   const loadAvailableLanguages = async () => {
     const languages = await window.api.spellcheck.getAvailableLanguages();
     setAvailableLanguages(languages);
+  };
+
+  const loadEncryptionStatus = async () => {
+    const available = await window.api.security.isEncryptionAvailable();
+    setEncryptionAvailable(available);
   };
 
   const toggleLanguage = (code: string) => {
@@ -464,7 +471,28 @@ function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
 
               {settings.provider === 'mistral' && (
                 <div className="form-group">
-                  <label className="form-label">Mistral API Key</label>
+                  <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    Mistral API Key
+                    {encryptionAvailable !== null && (
+                      <span
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          fontSize: '11px',
+                          color: encryptionAvailable ? 'var(--success-color)' : 'var(--warning-color)',
+                        }}
+                        title={
+                          encryptionAvailable
+                            ? 'API key is encrypted at rest using OS keychain'
+                            : 'OS encryption unavailable; key stored without encryption'
+                        }
+                      >
+                        {encryptionAvailable ? <Shield size={14} /> : <ShieldAlert size={14} />}
+                        {encryptionAvailable ? 'Encrypted' : 'Unencrypted'}
+                      </span>
+                    )}
+                  </label>
                   <input
                     type="password"
                     className="form-input"
@@ -482,6 +510,7 @@ function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
                     >
                       console.mistral.ai
                     </a>
+                    . Your key is stored securely using OS-level encryption.
                   </p>
                 </div>
               )}
@@ -812,6 +841,9 @@ function SettingsModal({ onClose, onSaved }: SettingsModalProps) {
                     placeholder="Enter your Mistral API key"
                     style={{ marginTop: '8px' }}
                   />
+                  <p className="form-hint" style={{ marginTop: '4px' }}>
+                    Your key is stored securely using OS-level encryption.
+                  </p>
                 </div>
               )}
 

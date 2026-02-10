@@ -125,6 +125,10 @@ const api = {
     checkAvailable: (): Promise<{ available: boolean; error?: string }> =>
       ipcRenderer.invoke('stt:checkAvailable'),
   },
+  security: {
+    isEncryptionAvailable: (): Promise<boolean> =>
+      ipcRenderer.invoke('security:encryptionAvailable'),
+  },
 };
 
 contextBridge.exposeInMainWorld('api', api);
