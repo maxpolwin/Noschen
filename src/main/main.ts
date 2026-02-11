@@ -11,6 +11,12 @@ import {
   LLMConfig,
   getLocalLLMStatus,
 } from './llm/localLLM';
+import {
+  getMistralApiKey,
+  setMistralApiKey,
+  migrateApiKeyFromSettings,
+  isEncryptionAvailable,
+} from './secureStorage';
 
 interface Note {
   id: string;
@@ -149,7 +155,18 @@ function getDefaultSettings(): AISettings {
 function loadSettings(): AISettings {
   try {
     if (fs.existsSync(SETTINGS_FILE)) {
-      return JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf-8'));
+      let raw = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf-8'));
+
+      // Migrate plaintext API key from settings.json to secure storage
+      if (raw.mistralApiKey && raw.mistralApiKey.length > 0) {
+        raw = migrateApiKeyFromSettings(raw);
+        // Re-save settings without the plaintext key
+        fs.writeFileSync(SETTINGS_FILE, JSON.stringify(raw, null, 2));
+      }
+
+      // Inject the API key from secure storage
+      raw.mistralApiKey = getMistralApiKey();
+      return raw as AISettings;
     }
   } catch (error) {
     console.error('Failed to load settings:', error);
@@ -158,7 +175,15 @@ function loadSettings(): AISettings {
 }
 
 function saveSettings(settings: AISettings) {
-  fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+  // Extract and securely store the API key
+  const apiKey = settings.mistralApiKey || '';
+  if (apiKey) {
+    setMistralApiKey(apiKey);
+  }
+
+  // Save settings without the plaintext API key
+  const settingsToSave = { ...settings, mistralApiKey: '' };
+  fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settingsToSave, null, 2));
 }
 
 let mainWindow: BrowserWindow | null = null;
@@ -374,7 +399,13 @@ ipcMain.handle('settings:save', async (_, settings: AISettings) => {
     }
   }
 
-  return settings;
+  // Return settings with the API key (from secure storage) for the renderer
+  return { ...settings, mistralApiKey: getMistralApiKey() };
+});
+
+// Secure storage status
+ipcMain.handle('security:encryptionAvailable', async () => {
+  return isEncryptionAvailable();
 });
 
 // Spellcheck operations

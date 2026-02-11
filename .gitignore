@@ -24,6 +24,9 @@ npm-debug.log*
 .env.local
 .env.*.local
 
+# Encrypted secrets (stored in app data, but ignore if ever copied here)
+secrets.enc
+
 # User data (stored in app data folder, not repo)
 userData/
 
