@@ -15,6 +15,44 @@ let isInitialized = false;
 let isInitializing = false;
 let initError: string | null = null;
 let lastInitAttempt = 0;
+let asarResolutionPatched = false;
+
+// Get the correct import path for node-llama-cpp.
+// In packaged mode, we must import from the unpacked directory because
+// node-llama-cpp is ESM-only with native binaries that need real filesystem paths.
+function getNodeLlamaCppImportPath(): string {
+  if (!app.isPackaged) {
+    return 'node-llama-cpp';
+  }
+  const unpackedPath = path.join(
+    process.resourcesPath,
+    'app.asar.unpacked', 'node_modules', 'node-llama-cpp', 'dist', 'index.js'
+  );
+  return `file://${unpackedPath}`;
+}
+
+// Ensure that hoisted dependencies inside app.asar can be resolved when
+// node-llama-cpp is loaded from app.asar.unpacked.
+//
+// Problem: node-llama-cpp is unpacked from the asar for native binary support,
+// but its hoisted JS dependencies (universalify, graceful-fs, jsonfile, etc.)
+// remain inside app.asar. Node's module resolution from the unpacked directory
+// walks the real filesystem and never finds these modules.
+//
+// Solution: Add app.asar/node_modules to Node's global module search paths.
+// This array is checked as a last-resort fallback after normal node_modules
+// traversal fails. Electron's fs patches transparently read from asar archives,
+// so modules resolved through this path load correctly.
+function ensureAsarModuleResolution(): void {
+  if (!app.isPackaged || asarResolutionPatched) return;
+  asarResolutionPatched = true;
+
+  const Module = require('module');
+  const asarNodeModules = path.join(process.resourcesPath, 'app.asar', 'node_modules');
+  if (!Module.globalPaths.includes(asarNodeModules)) {
+    Module.globalPaths.push(asarNodeModules);
+  }
+}
 
 // Detect Apple Silicon for Metal acceleration
 function isAppleSilicon(): boolean {
@@ -120,8 +158,10 @@ export async function initializeLocalLLM(): Promise<{ success: boolean; error?: 
 
     // Dynamic import for ESM module (using dynamicImport to bypass CommonJS transformation)
     if (!llamaModule) {
-      console.log('[LocalLLM] Loading node-llama-cpp module...');
-      llamaModule = await dynamicImport('node-llama-cpp');
+      ensureAsarModuleResolution();
+      const importPath = getNodeLlamaCppImportPath();
+      console.log('[LocalLLM] Loading node-llama-cpp module from:', importPath);
+      llamaModule = await dynamicImport(importPath);
     }
 
     const { getLlama } = llamaModule;

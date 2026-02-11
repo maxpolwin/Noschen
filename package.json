@@ -76,7 +76,8 @@
     ],
     "asarUnpack": [
       "models/**/*",
-      "node_modules/node-llama-cpp/**/*"
+      "node_modules/node-llama-cpp/**/*",
+      "node_modules/@node-llama-cpp/**/*"
     ],
     "mac": {
       "category": "public.app-category.productivity",
