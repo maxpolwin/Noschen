@@ -11,7 +11,7 @@
     "build:renderer": "tsc && vite build",
     "build:main": "tsc -p tsconfig.main.json",
     "start": "electron .",
-    "package": "npm run build && electron-builder",
+    "package": "npm run build && node scripts/nest-llama-deps.js && electron-builder && node scripts/nest-llama-deps.js --cleanup",
     "download-model": "node scripts/download-model.js",
     "generate-icon": "bash scripts/generate-icon.sh"
   },
