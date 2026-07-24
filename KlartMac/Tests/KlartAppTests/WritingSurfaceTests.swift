@@ -203,5 +203,59 @@ final class WritingSurfaceTests: XCTestCase {
         XCTAssertGreaterThan(anchor, 0, "the rail would draw this card above the window")
         XCTAssertLessThan(anchor, editor.viewportHeight, "the rail would draw this card below the window")
     }
+
+    // MARK: A resized view repaints in full
+
+    /// The editor's width animates continuously while the notes rail opens
+    /// or closes (SwiftUI springs the trailing padding that makes room for
+    /// it). TextKit1's own incremental invalidation is built for one settled
+    /// resize at a time and can undershoot the dirty rect across many rapid
+    /// ones — with `drawsBackground` off, anything outside that rect keeps
+    /// its previous glyphs on screen, ghosted behind the new wrap. Forcing a
+    /// full redraw on every width change is the backstop.
+    ///
+    /// Asserted via `widthChangeRedrawCount`, not by polling `needsDisplay`
+    /// after the fact: this test's window can auto-display synchronously
+    /// within a single method (no run-loop turn in between setting the flag
+    /// and reading it back), so the flag can already read `false` again by
+    /// the time a test would check it, even though AppKit genuinely acted on
+    /// it. The counter is set at the same moment as the real flag and can't
+    /// be raced the same way — see its declaration in `EditorView.swift`.
+    func testAWidthChangeForcesAFullRedraw() {
+        let editor = makeFixture(longNote())
+        editor.waitUntilReady()
+        let textView = editor.textView
+
+        let before = textView.widthChangeRedrawCount
+        var wider = textView.frame
+        wider.size.width += 40
+        textView.setFrameSize(wider.size)
+
+        XCTAssertEqual(
+            textView.widthChangeRedrawCount, before + 1,
+            "a width change must force a full redraw, or a resize mid-animation can leave stale glyphs on screen"
+        )
+    }
+
+    /// The counterpart to the test above: only *width* changes are suspect
+    /// (they're what the rail's opening animation drives). A height-only
+    /// change — routine, e.g. the viewport growing — must not pay for a full
+    /// redraw it doesn't need, the same cost-consciousness as
+    /// `testReCentringDoesNotKeepRewritingTheLayout` above.
+    func testAHeightOnlyChangeDoesNotForceAFullRedraw() {
+        let editor = makeFixture(longNote())
+        editor.waitUntilReady()
+        let textView = editor.textView
+
+        let before = textView.widthChangeRedrawCount
+        var taller = textView.frame
+        taller.size.height += 40
+        textView.setFrameSize(taller.size)
+
+        XCTAssertEqual(
+            textView.widthChangeRedrawCount, before,
+            "a height-only change forced a full redraw it doesn't need — only width changes should"
+        )
+    }
 }
 #endif

@@ -439,6 +439,33 @@ final class KlartTextView: NSTextView {
         scheduleOpenCentring()
     }
 
+    /// Bumped every time a width change forces the full-bounds redraw below —
+    /// exposed only so a test can see it fired, the same reasoning as
+    /// `marginRelayoutCount` above: the window here can auto-display synchronously
+    /// enough (well within one test method, with no run-loop turn in between)
+    /// that polling `needsDisplay` afterward can miss it having ever been set,
+    /// even though AppKit already acted on it.
+    private(set) var widthChangeRedrawCount = 0
+
+    /// TextKit1's incremental invalidation diffs against the last *displayed*
+    /// layout, which assumes one settled display pass per resize. A SwiftUI
+    /// spring animating this view's width (the editor's trailing padding as
+    /// the notes rail opens or closes) can change it many times faster than
+    /// that, so the computed dirty rect can undershoot the real visual delta
+    /// — and with `drawsBackground` off, nothing else erases what falls
+    /// outside it, leaving glyphs from the previous wrap on screen next to
+    /// the new ones. A full redraw on every width change is the backstop: it
+    /// doesn't depend on TextKit's own dirty-rect math being right, and costs
+    /// nothing outside this animation (typing never resizes this view).
+    override func setFrameSize(_ newSize: NSSize) {
+        let widthChanged = newSize.width != frame.width
+        super.setFrameSize(newSize)
+        if widthChanged {
+            needsDisplay = true
+            widthChangeRedrawCount += 1
+        }
+    }
+
     private func scheduleOpenCentring() {
         guard !hasCenteredOnOpen, !isWaitingToCenter, window != nil else { return }
         guard let scrollView = enclosingScrollView, scrollView.frame.height > 0 else { return }
