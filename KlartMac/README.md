@@ -102,6 +102,27 @@ Once the following repository secrets exist (GitHub → Settings → Secrets and
 
 With no secrets configured the workflow keeps working and falls back to ad-hoc signing (fine for CI checks, not for handing out). The certificate is imported into a throwaway CI keychain with a random password and never touches the repository.
 
+## TestFlight (primary distribution)
+
+Klårt's primary distribution channel is **TestFlight**, via the Mac App Store — the DMG above is the ad-hoc fallback for people who'd rather not go through App Store Connect. TestFlight uploads happen manually from Xcode; nothing in CI does this (it needs an interactive Apple ID sign-in). The app is already TestFlight-ready as-is: `project.yml` sets `CODE_SIGN_STYLE: Automatic` and `Scripts/Klart.entitlements` only requests sandbox-safe entitlements (App Sandbox, outgoing network, user-selected file access), so no project changes are needed to submit — just the one-time App Store Connect setup below.
+
+**One-time setup (developer.apple.com / appstoreconnect.apple.com):**
+
+1. Confirm the `com.klart.mac` App ID is registered under **Certificates, Identifiers & Profiles** — Xcode registers it automatically the first time you archive with your Team selected, so you can usually skip this.
+2. In **App Store Connect → Apps → +**, create a new app: platform **macOS**, bundle ID `com.klart.mac`, a name, primary language, and SKU (the SKU is internal-only, e.g. `klart-mac`).
+3. When you first upload a build, App Store Connect asks for **export compliance**. Klårt only uses standard HTTPS/TLS for cloud providers plus the vendored Argon2id/AES-256-GCM for local-only note encryption (never transmitted) — most apps in this shape qualify for the standard exemption, but confirm the exact answer yourself since it's a legal attestation, not something this repo can decide for you.
+
+**Every release, from Xcode:**
+
+1. `cd KlartMac && bash Scripts/generate-xcodeproj.sh` to (re)generate `Klart.xcodeproj`.
+2. Open it, select the **Klart** target → **Signing & Capabilities**, pick your Team.
+3. Bump `CURRENT_PROJECT_VERSION` in `project.yml` (App Store Connect rejects re-uploading a build number that's already been used for the current `MARKETING_VERSION`) and re-run `generate-xcodeproj.sh`.
+4. Set the run destination to **My Mac**, then **Product → Archive**.
+5. In the **Organizer** window that opens, select the archive → **Distribute App** → **App Store Connect** → **Upload**. Xcode handles Apple Distribution signing and the App Store provisioning profile automatically under Automatic signing.
+6. Once Apple finishes processing the build (usually a few minutes to an hour, emailed when ready), go to **App Store Connect → your app → TestFlight**:
+   - **Internal testers** (up to 100, must be users on your App Store Connect team) get the build immediately, no review.
+   - **External testers** need a **Test Information** page filled in first and go through a short **Beta App Review** (typically faster than full App Review) before their first build.
+
 ## Using Klårt
 
 1. Create a note (`⌘N`). Give it a `# Topic` heading and `## Sub-question` sections.
