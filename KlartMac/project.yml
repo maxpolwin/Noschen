@@ -40,6 +40,25 @@ targets:
     dependencies:
       - package: KlartCore
         product: KlartKit
+    # Xcode has no asset catalog of its own to keep in sync with the shipped
+    # icon, so it never got one — this target's app icon was always the
+    # generic blank placeholder. Reuse the same repo-root icon make-app.sh
+    # already embeds for the dist build (see scripts/generate-icon.sh) rather
+    # than adding a second, driftable copy: `Info.plist`'s CFBundleIconFile
+    # is already "AppIcon", it was just never backed by a real file here.
+    postBuildScripts:
+      - name: Embed App Icon
+        basedOnDependencyAnalysis: false
+        script: |
+          set -euo pipefail
+          ICON_SRC="${SRCROOT}/../build/icon.icns"
+          DEST="${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources"
+          if [ -f "$ICON_SRC" ]; then
+            mkdir -p "$DEST"
+            cp "$ICON_SRC" "$DEST/AppIcon.icns"
+          else
+            echo "warning: build/icon.icns not found — app icon will be missing" >&2
+          fi
     settings:
       base:
         PRODUCT_NAME: Klart
