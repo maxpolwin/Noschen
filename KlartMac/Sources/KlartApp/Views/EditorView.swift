@@ -579,8 +579,36 @@ final class KlartTextView: NSTextView {
 final class EditorBridge: ObservableObject {
     private(set) weak var textView: NSTextView?
     /// Bumped on every scroll or edit so geometry-dependent overlays recompute.
+    /// Only ever written by `publishPendingBump()`, a turn of the run loop
+    /// after whatever moved — see `scheduleBump(unconditional:)` for why.
     @Published private(set) var layoutTick = 0
     private var boundsObserver: NSObjectProtocol?
+
+    /// A publish is already booked for the next turn of the run loop.
+    private var bumpScheduled = false
+    /// The booked publish goes out even if the geometry below reads back
+    /// unchanged — an edit moves the text without moving the viewport.
+    private var bumpIsUnconditional = false
+    /// The geometry as of the tick last published.
+    private var publishedGeometry: Geometry?
+
+    /// Everything `lineY` depends on apart from the text itself: where the
+    /// viewport sits, where the typewriter margin starts the page, and how wide
+    /// the column wraps at. If none of the three moved, no card can have moved.
+    private struct Geometry: Equatable {
+        let scrollY: CGFloat
+        let insetHeight: CGFloat
+        let width: CGFloat
+    }
+
+    private var currentGeometry: Geometry? {
+        guard let textView else { return nil }
+        return Geometry(
+            scrollY: textView.visibleRect.minY,
+            insetHeight: textView.textContainerInset.height,
+            width: textView.frame.width
+        )
+    }
 
     func attach(textView: NSTextView, scrollView: NSScrollView) {
         self.textView = textView
@@ -593,11 +621,62 @@ final class EditorBridge: ObservableObject {
             object: scrollView.contentView,
             queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.bump() }
+            MainActor.assumeIsolated { self?.scheduleBump(unconditional: false) }
+        }
+        // A fresh text view means the remembered geometry describes a document
+        // that is gone — and its numbers can read back identical (same margin,
+        // same offset, different note), which would have the guard below drop
+        // the very tick the rail needs to re-anchor against the new text.
+        publishedGeometry = nil
+        scheduleBump(unconditional: true)
+    }
+
+    /// The text changed: anchors have to be recomputed even when the viewport
+    /// has not moved a pixel.
+    func bump() {
+        scheduleBump(unconditional: true)
+    }
+
+    /// Books the publish for the next turn of the run loop rather than doing it
+    /// here.
+    ///
+    /// `queue: .main` buys no deferral of its own: a block observer runs
+    /// *synchronously* on the posting thread whenever that thread is already the
+    /// main one, and AppKit posts the clip view's bounds change from inside
+    /// whatever moved it. While the notes rail opens, the thing moving it is
+    /// SwiftUI springing the writing column's width — so `layoutTick` was being
+    /// mutated from inside a view update, which is the "Publishing changes from
+    /// within view updates is not allowed, this will cause undefined behavior"
+    /// warning, once or twice a frame for the length of the animation. Deferring
+    /// is the same move `scheduleOpenCentring` makes for the same reason, and it
+    /// costs the rail at most one turn of the loop behind the text.
+    ///
+    /// The flag coalesces as well as defers. A single width change posts two or
+    /// three bounds notifications and a second of typewriter scrolling posts
+    /// closer to two hundred, while the rail can only draw one placement per
+    /// frame however many arrive.
+    private func scheduleBump(unconditional: Bool) {
+        bumpIsUnconditional = bumpIsUnconditional || unconditional
+        guard !bumpScheduled else { return }
+        bumpScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated { self?.publishPendingBump() }
         }
     }
 
-    func bump() {
+    private func publishPendingBump() {
+        bumpScheduled = false
+        let unconditional = bumpIsUnconditional
+        bumpIsUnconditional = false
+
+        // Bounds changes also arrive for horizontal scrolls, for origin clamps
+        // that land back where they started, and for resize frames the wrap
+        // never notices. None of those move a card, and each one that publishes
+        // anyway costs a whole-document outline parse in the rail's placement
+        // pass — so a tick nothing can read differently is not sent at all.
+        let geometry = currentGeometry
+        guard unconditional || geometry != publishedGeometry else { return }
+        publishedGeometry = geometry
         layoutTick &+= 1
     }
 
@@ -685,10 +764,20 @@ struct MarkdownEditor: NSViewRepresentable {
         // shouldGenerateGlyphs delegate is what lets us hide marker glyphs.
         textView.layoutManager?.delegate = context.coordinator
 
+        // The delegate is already live, so this assignment re-enters
+        // `textViewDidChangeSelection` — and `makeNSView` runs inside SwiftUI's
+        // update pass just as `updateNSView` does, so its `onCursorChange`
+        // would publish from in there for the same reason. Same guard, same
+        // report a turn later. Once per editor, which `.id(selectedNoteID)`
+        // makes once per note switch.
+        context.coordinator.isPushingText = true
         textView.string = text
         EditorStyler.restyleAll(textView)
+        context.coordinator.isPushingText = false
         context.coordinator.lastActiveParagraphStart = EditorStyler.activeParagraphRange(textView).location
         bridge?.attach(textView: textView, scrollView: scrollView)
+        let cursor = textView.selectedRange().location
+        DispatchQueue.main.async { [onCursorChange] in onCursorChange(cursor) }
         return scrollView
     }
 
@@ -700,17 +789,32 @@ struct MarkdownEditor: NSViewRepresentable {
         // user typing already updated the binding via the delegate.
         if !context.coordinator.isEditing && textView.string != text {
             let selection = textView.selectedRange()
+            // Both writes below synchronously re-enter the delegate's
+            // `textViewDidChangeSelection` — assigning `string` once, the
+            // explicit selection again — and its `onCursorChange` writes an
+            // `@Published` on AppState. From here that lands inside SwiftUI's
+            // own update pass, which is the same illegal publish `EditorBridge`
+            // books its tick to avoid. Hold the callback back across the push
+            // and report the settled cursor a turn later instead.
+            context.coordinator.isPushingText = true
             textView.string = text
             EditorStyler.restyleAll(textView)
             let length = (text as NSString).length
             textView.setSelectedRange(NSRange(location: min(selection.location, length), length: 0))
+            context.coordinator.isPushingText = false
             context.coordinator.lastActiveParagraphStart = EditorStyler.activeParagraphRange(textView).location
+            let cursor = textView.selectedRange().location
+            DispatchQueue.main.async { [onCursorChange] in onCursorChange(cursor) }
         }
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate, NSLayoutManagerDelegate {
         var parent: MarkdownEditor
         var isEditing = false
+        /// Set while `updateNSView` is pushing external text in, so the
+        /// selection changes that push causes are not reported as the user
+        /// having moved the caret — see the call site for why that matters.
+        var isPushingText = false
         /// Start location of the paragraph whose markers are currently revealed,
         /// so a cursor move can re-hide it and reveal the new one.
         var lastActiveParagraphStart = 0
@@ -840,6 +944,9 @@ struct MarkdownEditor: NSViewRepresentable {
             // Moving the cursor changes which paragraphs are lit, so the dim
             // has to be recomputed even when the text itself didn't change.
             reapplyFocus(in: textView)
+            // Nothing on this stack is the user moving the caret: the push in
+            // `updateNSView` reports the settled cursor itself, off SwiftUI's.
+            guard !isPushingText else { return }
             parent.onCursorChange(textView.selectedRange().location)
         }
 
