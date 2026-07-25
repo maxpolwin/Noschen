@@ -50,8 +50,33 @@ else
 fi
 
 # Fail the build if the sandbox or hardened runtime didn't take.
-codesign --display --entitlements - "$APP" 2>/dev/null | grep -q "com.apple.security.app-sandbox" \
+#
+# Each signature is read back into a variable before being matched. Piping
+# codesign straight into `grep -q` reads as equivalent and is not: `grep -q`
+# exits the moment it matches, which closes the pipe, so codesign takes SIGPIPE
+# on its next write and dies with 141 — and `pipefail` at the top of this script
+# then reports that as this check failing. The runtime check below failed that
+# way on every single run; the entitlements one escaped it only by writing
+# little enough to finish before grep left.
+if ! entitlements="$(codesign --display --entitlements - "$APP" 2>/dev/null)"; then
+  echo "error: could not read the signature's entitlements back" >&2
+  exit 1
+fi
+if ! signature="$(codesign --display --verbose=4 "$APP" 2>&1)"; then
+  echo "error: could not read the signature back: $signature" >&2
+  exit 1
+fi
+
+grep -q "com.apple.security.app-sandbox" <<< "$entitlements" \
   || { echo "error: app-sandbox entitlement missing from signature" >&2; exit 1; }
-codesign --display --verbose=4 "$APP" 2>&1 | grep -q "flags=.*runtime" \
-  || { echo "error: hardened runtime flag missing from signature" >&2; exit 1; }
+
+# The line this matches reads e.g.
+#   CodeDirectory v=20500 size=8206 flags=0x10002(adhoc,runtime) hashes=246+7
+# The flag has to sit inside the flags token itself, so that the unrelated
+# "Runtime Version=26.5.0" printed a few lines further down cannot satisfy it.
+grep -q "flags=[^ ]*runtime" <<< "$signature" \
+  || { echo "error: hardened runtime flag missing from signature" >&2
+       echo "       codesign reported: $(grep -m1 "flags=" <<< "$signature" || true)" >&2
+       exit 1; }
+
 echo "Verified: App Sandbox + Hardened Runtime present in signature"
