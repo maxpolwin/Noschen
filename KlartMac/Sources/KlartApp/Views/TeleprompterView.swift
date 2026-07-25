@@ -71,7 +71,13 @@ struct TeleprompterView: View {
     @EnvironmentObject var state: AppState
     @Environment(\.openSettings) private var openSettings
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @StateObject private var bridge = EditorBridge()
+    // Owned here, observed only by `EditorRail` (the one view that reads its
+    // geometry). `@StateObject` would subscribe *this* view to every tick as
+    // well, so each scroll frame re-ran the whole body — re-sorting the notes
+    // panel and rebuilding chrome that cannot depend on where the text sits.
+    // `EditorBridge()` costs nothing to construct, which is the one thing
+    // `@State` gives up over `@StateObject`.
+    @State private var bridge = EditorBridge()
 
     // Left edge: hover/dwell (or a click) → panel. Hover state is tracked per
     // zone because enter/leave callbacks between adjacent zones arrive
@@ -741,7 +747,21 @@ struct TeleprompterView: View {
     private var rail: some View {
         HStack(spacing: 0) {
             Spacer(minLength: 0)
-            EditorRail(bridge: bridge, topInset: Metrics.titleBarHeight + 8)
+            // Clear of the title fog, not just the title bar. The fog runs
+            // opaque across `titleBarHeight` and then fades over
+            // `fogFadeHeight` more, so a card resting at `titleBarHeight + 8`
+            // sat with 93% of itself inside the fade and was washed out to
+            // near-invisibility. The rail starts where the fog has finished.
+            EditorRail(
+                bridge: bridge,
+                topInset: Metrics.titleBarHeight + Metrics.fogFadeHeight + 8,
+                // The foot only costs the rail space when the word-count band
+                // is actually showing; off (the default) a card may sit almost
+                // to the bottom edge.
+                bottomInset: state.settings.showWordCount
+                    ? Metrics.wordCountBarHeight + Metrics.fogFadeHeight + 8
+                    : 16
+            )
                 .frame(width: railWidth)
                 // The writing column's mirrored trailing padding (railWidth,
                 // above) already springs on width changes; without this the
@@ -892,11 +912,17 @@ private struct EditorRail: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var bridge: EditorBridge
     let topInset: CGFloat
+    /// How much of the rail's foot to keep clear, mirroring `topInset` at the
+    /// other end: the word-count band carries the same fog as the title, so a
+    /// card allowed to sit under it fades out exactly the way the top ones
+    /// did. Passed in because the fog metrics belong to `TeleprompterView`.
+    let bottomInset: CGFloat
 
     @State private var cardHeights: [UUID: CGFloat] = [:]
 
     private static let cardGap: CGFloat = 12
     private static let fallbackHeight: CGFloat = 110
+
 
     var body: some View {
         GeometryReader { geo in
@@ -974,8 +1000,10 @@ private struct EditorRail: View {
     }
 
     /// Desired y for every suggestion (its section heading's line, or the top
-    /// for unanchored ones), then a single downward pass so cards never
-    /// overlap. `bridge.layoutTick` is read so scrolling and edits recompute.
+    /// for unanchored ones), then a downward pass so cards never overlap and
+    /// a bottom-up pass so the tail stays on screen without dragging the
+    /// anchored cards off their headings with it.
+    /// `bridge.layoutTick` is read so scrolling and edits recompute.
     private func placements(in height: CGFloat) -> [Placement] {
         _ = bridge.layoutTick
         let outline = DocumentOutline.parse(state.editorText)
@@ -993,16 +1021,21 @@ private struct EditorRail: View {
             nextFree = y + (cardHeights[entry.item.id] ?? Self.fallbackHeight) + Self.cardGap
         }
 
-        // Keep the stack on screen: if the last card overflows, shift the
-        // whole tail up (never above the title bar).
-        if let last = placed.last {
-            let lastHeight = cardHeights[last.item.id] ?? Self.fallbackHeight
-            let overflow = last.y + lastHeight + 16 - height
-            if overflow > 0 {
-                placed = placed.map {
-                    Placement(item: $0.item, y: max(topInset, $0.y - overflow))
-                }
-            }
+        // Keep the stack on screen. This used to subtract the last card's
+        // overflow from *every* card, which is a rigid translation: a card
+        // resting exactly on its heading, nowhere near the bottom edge, was
+        // still dragged up by however far the last card overran — 50–110 pt
+        // in a normal window, enough to pull the top card back into the fog
+        // and to break the one promise the rail makes, that a note sits
+        // beside the text it is about. Compress from the bottom instead, so
+        // only the cards that genuinely do not fit give up their anchor, and
+        // they give up exactly as much as they must.
+        var ceiling = height - bottomInset
+        for index in placed.indices.reversed() {
+            let cardHeight = cardHeights[placed[index].item.id] ?? Self.fallbackHeight
+            let y = max(topInset, min(placed[index].y, ceiling - cardHeight))
+            placed[index] = Placement(item: placed[index].item, y: y)
+            ceiling = y - Self.cardGap
         }
         return placed
     }
@@ -1106,13 +1139,10 @@ private struct RailCard: View {
             RoundedRectangle(cornerRadius: 9)
                 .stroke(Theme.border, lineWidth: 1)
         )
-        .overlay(alignment: .leading) {
-            // The pencil line: a hairline of ink instead of a colored bar.
-            RoundedRectangle(cornerRadius: 1)
-                .fill(Theme.textPrimary.opacity(hovering ? 0.5 : 0.28))
-                .frame(width: 2)
-                .padding(.vertical, 9)
-        }
+        // No accent stripe down the leading edge: the card's own hairline
+        // border already says where it begins, and a second vertical mark
+        // beside it is one more thing on screen earning nothing. The glyph
+        // carries the kind.
         // An attended note retreats rather than vanishing: the rail keeps a
         // record of what has been dealt with, without competing for the eye.
         .opacity(outcome == nil ? 1 : 0.5)

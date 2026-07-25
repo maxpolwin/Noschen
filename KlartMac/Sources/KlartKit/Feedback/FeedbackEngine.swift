@@ -54,8 +54,30 @@ public struct FeedbackEngine: Sendable {
         )
         try Task.checkCancellation()
 
+        // The model is only ever shown one section's body (the others reach it
+        // as bare titles), so every item it returns is about the section the
+        // author is writing in — but the JSON shape never asks it to say so,
+        // and it almost never volunteers it. Left nil, the margin rail has no
+        // anchor to align a card against and stacks every card at the top of
+        // the window instead, in the title fog. Stamp the section we already
+        // know here rather than asking the model to echo a title back: a
+        // hallucinated or paraphrased heading fails the outline lookup and
+        // lands the card back at the top, which is the bug we're fixing.
+        // `id` is carried across so a re-stamped item is the same card to
+        // SwiftUI and the rail doesn't replay its insertion animation.
         let items = FeedbackParser.parse(raw)
             .filter { !rejectedFingerprints.contains($0.fingerprint) }
+            .map { item -> FeedbackItem in
+                let named = item.section?.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard named?.isEmpty ?? true else { return item }
+                return FeedbackItem(
+                    id: item.id,
+                    kind: item.kind,
+                    text: item.text,
+                    suggestion: item.suggestion,
+                    section: context.currentSectionTitle
+                )
+            }
         return .items(Array(items.prefix(settings.tipStyle.maxTips)))
     }
 }
