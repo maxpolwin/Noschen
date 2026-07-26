@@ -33,18 +33,6 @@ private enum TeleprompterMotion {
     /// rather than a flicker you only half-see.
     static let duration: Double = 2.0
     static let bounce: Double = 0.18
-
-    /// How long a note's anchor takes to settle onto a line it moved to
-    /// because the column re-wrapped — not because the reader scrolled.
-    ///
-    /// Narrowing the column re-wraps the text, so a heading moves in
-    /// whole-line steps, and the anchors are re-derived from live TextKit on
-    /// every frame of `duration` above. Unsmoothed, that reads as cards
-    /// stair-stepping down in 22.5 pt hops while they glide sideways. Short and
-    /// bounceless on purpose: this exists to blur those steps, not to add a
-    /// motion of its own, and a card that trails the column it belongs to
-    /// reads as detached — so it has to catch up well inside the shared spring.
-    static let anchorSettle: Double = 0.28
 }
 
 /// Breathes while the editor is reading — the same beat the caret blinks on
@@ -107,11 +95,6 @@ struct TeleprompterView: View {
     @State private var railOpacity: Double = 1
     @State private var railFadeTask: Task<Void, Never>?
     @State private var typedSinceRailShown = false
-
-    /// True while the writing column's width is mid-spring. The rail smooths
-    /// its anchors only inside this window — see `EditorRail.anchorSettle`.
-    @State private var railTransitioning = false
-    @State private var railTransitionTask: Task<Void, Never>?
 
     // Left panel: the same treatment, so neither edge outstays the other.
     @State private var panelOpacity: Double = 1
@@ -190,7 +173,6 @@ struct TeleprompterView: View {
             dwellTask?.cancel()
             collapseTask?.cancel()
             railFadeTask?.cancel()
-            railTransitionTask?.cancel()
             panelFadeTask?.cancel()
         }
         .onChange(of: state.searchRequested) { _, _ in
@@ -216,18 +198,11 @@ struct TeleprompterView: View {
             Text("This permanently removes the note file from disk.")
         }
         .onChange(of: state.editorRailVisible) { _, visible in
-            markRailTransition()
             if visible {
                 wakeRail()
             } else {
                 railFadeTask?.cancel()
             }
-        }
-        // The widest note changing re-springs the column's padding just as
-        // opening the rail does, and re-wraps the text the same way.
-        .onChange(of: railWidth) { _, _ in
-            guard state.editorRailVisible else { return }
-            markRailTransition()
         }
         .onChange(of: state.feedbackItems) { old, new in
             // Fresh suggestions restore a rail that was mid-fade.
@@ -779,7 +754,6 @@ struct TeleprompterView: View {
             // near-invisibility. The rail starts where the fog has finished.
             EditorRail(
                 bridge: bridge,
-                transitioning: railTransitioning,
                 topInset: Metrics.titleBarHeight + Metrics.fogFadeHeight + 8,
                 // The foot only costs the rail space when the word-count band
                 // is actually showing; off (the default) a card may sit almost
@@ -847,30 +821,6 @@ struct TeleprompterView: View {
             guard !Task.isCancelled else { return }
             panelExpanded = false
             panelOpacity = 1
-        }
-    }
-
-    /// Holds `railTransitioning` open for as long as the shared spring runs, so
-    /// the rail can tell an anchor moving because the column re-wrapped from an
-    /// anchor moving because the reader scrolled. Only the first wants easing.
-    private func markRailTransition() {
-        railTransitionTask?.cancel()
-        // Nothing to smooth: with Reduce Motion the width lands in one step, so
-        // the anchors are only ever read at their settled positions.
-        guard !reduceMotion else {
-            railTransitioning = false
-            return
-        }
-        railTransitioning = true
-        railTransitionTask = Task { @MainActor in
-            // Held past the shared spring by one settle: a card still easing
-            // onto the last anchor when this goes false would lose its
-            // animation mid-flight and snap the remaining few points — the
-            // single visible jolt this whole mechanism exists to remove.
-            let held = TeleprompterMotion.duration + TeleprompterMotion.anchorSettle
-            try? await Task.sleep(nanoseconds: UInt64(held * 1_000_000_000))
-            guard !Task.isCancelled else { return }
-            railTransitioning = false
         }
     }
 
@@ -961,9 +911,6 @@ private struct EditorRail: View {
     @EnvironmentObject var state: AppState
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var bridge: EditorBridge
-    /// True while the writing column's width is mid-spring — the one window in
-    /// which an anchor moves for a reason other than the reader scrolling.
-    let transitioning: Bool
     let topInset: CGFloat
     /// How much of the rail's foot to keep clear, mirroring `topInset` at the
     /// other end: the word-count band carries the same fog as the title, so a
@@ -989,7 +936,6 @@ private struct EditorRail: View {
                         RailCard(item: placement.item)
                             .background(heightReader(for: placement.item.id))
                             .offset(y: placement.y)
-                            .animation(anchorSettle, value: placement.y)
                             // A handled note leaves toward the margin it came
                             // from, so the eye follows it out instead of
                             // noticing a gap appear mid-rail.
@@ -1010,15 +956,6 @@ private struct EditorRail: View {
         )
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Editor suggestions")
-    }
-
-    /// Eases a card onto an anchor that moved because the column re-wrapped,
-    /// and *only* then: while the reader scrolls, a card has to track its line
-    /// exactly, and a spring in that path would have the whole rail swim behind
-    /// the text it is supposed to be pinned to.
-    private var anchorSettle: Animation? {
-        guard transitioning, !reduceMotion else { return nil }
-        return .spring(duration: TeleprompterMotion.anchorSettle, bounce: 0)
     }
 
     private var emptyCard: some View {
