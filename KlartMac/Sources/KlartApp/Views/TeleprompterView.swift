@@ -199,6 +199,21 @@ struct TeleprompterView: View {
         }
         .onChange(of: state.editorRailVisible) { _, visible in
             if visible {
+                // `rightEdge` goes inert the instant the rail opens
+                // (`.allowsHitTesting(!state.editorRailVisible)`), so its
+                // `.onHover` can never report the pointer leaving again — and
+                // opening the rail by *clicking* that strip guarantees the flag
+                // is true at this moment. Left latched, `railOffset` returns
+                // `railWidth - peekAmount` on the next close: the rail parks 26 pt
+                // short of gone, an opaque sliver of card sitting over the ends of
+                // the text lines until the pointer next crosses the strip, at
+                // which point the remainder flicks off on `handleSpring`.
+                // `collapseEdge()` clears the left edge's own hover flags for
+                // exactly this reason. Clearing it here is visually inert:
+                // `railOffset` is 0 for as long as the rail is open, whatever this
+                // says, and the closed-state peek keeps working because the strip
+                // is hit-testable again by the time it matters.
+                hoveringRightStrip = false
                 wakeRail()
             } else {
                 railFadeTask?.cancel()
