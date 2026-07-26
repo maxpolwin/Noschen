@@ -291,6 +291,10 @@ final class KlartTextView: NSTextView {
     private var typewriterTimer: Timer?
     private var typewriterTarget: CGFloat = 0
     private var typewriterVelocity: CGFloat = 0
+    /// The spring's exact position, kept apart from the clip view's quantised
+    /// bounds origin so sub-pixel steps are not rounded away — see
+    /// `startTypewriterAnimation`.
+    private var typewriterPosition: CGFloat = 0
     /// Guards against re-entering while adjusting the scroll view, which can
     /// call back into `scrollRangeToVisible` and recurse.
     private var isCentering = false
@@ -506,9 +510,26 @@ final class KlartTextView: NSTextView {
     private func startTypewriterAnimation(in scrollView: NSScrollView) {
         guard typewriterTimer == nil else { return }
         let dt: CGFloat = 1.0 / 60
+        // Integrated on our own exact position, not on the clip view's.
+        // `setBoundsOrigin` quantises to the backing store — whole points on a
+        // 1x display — so reading the origin back each frame throws away every
+        // sub-pixel step. As the spring decelerates its per-frame step falls
+        // under one point, the read-back never changes, the remaining distance
+        // never shrinks, and the page stops dead short of the caret: measured
+        // frozen 7.8 pt out for the whole 8 s a test waited, and it would have
+        // stayed there indefinitely.
+        typewriterPosition = scrollView.contentView.bounds.origin.y
         typewriterTimer = Timer.scheduledTimer(withTimeInterval: Double(dt), repeats: true) { [weak self, weak scrollView] timer in
             guard let self, let scrollView else { timer.invalidate(); return }
-            let current = scrollView.contentView.bounds.origin.y
+            // Something else may have scrolled the page (AppKit revealing the
+            // caret for a command the spring does not handle). Follow it rather
+            // than fight it — but only on a real jump, since the quantisation
+            // above always leaves a sub-point disagreement.
+            let onScreen = scrollView.contentView.bounds.origin.y
+            if abs(onScreen - self.typewriterPosition) > 1.5 {
+                self.typewriterPosition = onScreen
+            }
+            let current = self.typewriterPosition
             let distance = self.typewriterTarget - current
 
             // Velocity carries across target changes, so continuous typing
@@ -521,12 +542,14 @@ final class KlartTextView: NSTextView {
 
             if abs(distance) < Typewriter.restEpsilon, abs(self.typewriterVelocity) < Typewriter.restEpsilon {
                 self.typewriterVelocity = 0
+                self.typewriterPosition = self.typewriterTarget
                 self.applyTypewriterOffset(self.typewriterTarget, in: scrollView)
                 timer.invalidate()
                 self.typewriterTimer = nil
                 return
             }
-            self.applyTypewriterOffset(current + self.typewriterVelocity * dt, in: scrollView)
+            self.typewriterPosition = current + self.typewriterVelocity * dt
+            self.applyTypewriterOffset(self.typewriterPosition, in: scrollView)
         }
     }
 
